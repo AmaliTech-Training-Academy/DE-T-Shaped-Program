@@ -17,7 +17,7 @@
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [AWS re:Invent — Building Data Lakes on AWS](https://www.youtube.com/watch?v=Yp_4wkRbXJY) | 60 min | Full data lake architecture pattern |
+| [AWS re:Invent — Building Data Lakes on AWS](https://www.youtube.com/watch?v=mpQa_Zm1xW8) | 60 min | Full data lake architecture pattern |
 
 ### AWS Data Services Reference
 
