@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Time to Complete** | 45-55 hours |
+| **Time to Complete** | 25-35 hours |
 | **Prerequisites** | SK-01 Python Data Engineering Practitioner |
 | **Badge Earned** | SQL and Data Modeling Specialist |
 | **Difficulty** | Foundational |

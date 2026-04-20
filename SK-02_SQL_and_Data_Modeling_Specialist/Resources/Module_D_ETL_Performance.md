@@ -10,7 +10,7 @@
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [ETL Best Practices](https://towardsdatascience.com/etl-pipeline-best-practices-cc2cf5721c80) | 25 min | Idempotency and incremental patterns |
+| [ETL Best Practices](https://www.youtube.com/watch?v=-rMDmD7GNtE) | 25 min | Idempotency and incremental patterns |
 
 ---
 

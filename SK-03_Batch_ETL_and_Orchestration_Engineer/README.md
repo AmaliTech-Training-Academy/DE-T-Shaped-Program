@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Time to Complete** | 50-60 hours |
+| **Time to Complete** | 40-50 hours |
 | **Prerequisites** | SK-02 SQL and Data Modeling Specialist |
 | **Badge Earned** | Batch ETL and Orchestration Engineer |
 | **Difficulty** | Intermediate |

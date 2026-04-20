@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Time to Complete** | 45-55 hours |
+| **Time to Complete** | 40-50 hours |
 | **Prerequisites** | SK-03 Batch ETL and Orchestration Engineer |
 | **Badge Earned** | AWS Cloud Data Engineer |
 | **Difficulty** | Intermediate |

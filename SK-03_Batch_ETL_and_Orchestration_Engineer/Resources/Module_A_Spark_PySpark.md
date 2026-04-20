@@ -10,7 +10,7 @@
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [Spark: The Definitive Guide — Ch 1-4](https://www.oreilly.com/library/view/spark-the-definitive/9781491912201/) | 2 hrs | Authoritative reference on Spark cluster model, execution, DataFrames |
+| [Spark: The Definitive Guide — Ch 1-4](https://amalitech-my.sharepoint.com/:b:/p/francis_class-peters/IQDmkAj8f1FVSZgD2Kl2ZYMmAbyasQ1FFWPMDUCKPV-D-IM?e=FnKGEI) | 2 hrs | Authoritative reference on Spark cluster model, execution, DataFrames |
 | [Understanding Spark's Execution Model — Databricks](https://www.databricks.com/blog/2015/06/22/understanding-your-spark-application-through-visualization.html) | 20 min | Visual Job → Stage → Task hierarchy |
 
 ### Watch
