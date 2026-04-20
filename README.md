@@ -1,6 +1,6 @@
 # T-Shaped Data Engineering Programme
 
-A production-focused, self-paced curriculum to transform career changers into job-ready data engineers.
+A self-paced curriculum to transform career changers into job-ready data engineers.
 
 ---
 
@@ -88,33 +88,17 @@ SK-XX_Skillset_Name/
 
 ---
 
-## Time Commitment
-
-| Path | Duration | Hours/Week |
-|------|----------|------------|
-| Full curriculum (AWS track) | ~9 months | 15 hrs/week |
-| Full curriculum (Microsoft track) | ~9 months | 15 hrs/week |
-| Core only (SK-01 to SK-03) | ~3 months | 15 hrs/week |
-
----
-
 ## Resource Philosophy
 
 Every resource in this curriculum follows these principles:
 
-1. **No redundancy** — One excellent resource per concept, not five okay ones
-2. **Production-focused** — Learn what you'll actually use at work
-3. **Tiered difficulty** — Essential → Recommended → Advanced
-4. **Time-boxed** — Every resource has an estimated completion time
-5. **Why before how** — Understand the business context before the syntax
+1. **Production-focused** — Learn what you'll actually use at work
+2. **Tiered difficulty** — Essential → Recommended → Advanced
+3. **Time-boxed** — Every resource has an estimated completion time
+4. **Why before how** — Understand the business context before the syntax
 
 ---
 
-## Badges
-
-Complete a skillset's capstone to earn its badge. Badges are recorded and can be displayed on LinkedIn or your portfolio.
-
----
 
 ## Questions?
 
