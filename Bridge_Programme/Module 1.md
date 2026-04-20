@@ -1,5 +1,4 @@
 # BRIDGE PROGRAMME: Layer 0
-## From Career Changer to Data Engineering Ready
 
 ---
 

@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Time to Complete** | 40-50 hours |
+| **Time to Complete** | 25-35 hours |
 | **Prerequisites** | Bridge Programme (or equivalent Python/pandas familiarity) |
 | **Badge Earned** | Python Data Engineering Practitioner |
 | **Difficulty** | Foundational |
@@ -37,8 +37,8 @@ By the end of this skillset, you will be able to:
 │   1. RESOURCES          2. LAB              3. CAPSTONE         │
 │   ─────────────         ─────────           ───────────         │
 │   Learn the concepts    Apply them in a     Prove mastery       │
-│   (20-25 hrs)           guided project      independently       │
-│                         (6-8 hrs)           (12-15 hrs)         │
+│             guided project      independently       │
+│                                            │
 │                                                                 │
 │   Module A: Foundations                                         │
 │        ↓                                                        │
@@ -59,13 +59,13 @@ By the end of this skillset, you will be able to:
 
 ## Recommended Order
 
-### Week 1-2: Resources (Modules A-B)
+### Resources (Modules A-B)
 Start with the **Essential** items in each module. Use **Recommended** to deepen understanding. Save **Advanced** for after you've completed the Lab.
 
-### Week 3: Resources (Modules C-D) + Lab
+### Resources (Modules C-D) + Lab
 Continue through the remaining modules, then complete the guided lab. The lab will reinforce everything you've learned.
 
-### Week 4: Capstone
+### Capstone
 Work independently on the capstone project. This is where you prove your skills.
 
 ---
@@ -76,7 +76,7 @@ Work independently on the capstone project. This is where you prove your skills.
 |---------|-------------|
 | [Resources/](Resources/) | Curated learning materials organized by module |
 | [Labs/](Labs/) | Guided hands-on project (ShopStream) |
-| [Capstone/](Project/) | Independent project for badge certification |
+| [Capstone/](Project/) | Independent project for badge |
 
 ---
 
