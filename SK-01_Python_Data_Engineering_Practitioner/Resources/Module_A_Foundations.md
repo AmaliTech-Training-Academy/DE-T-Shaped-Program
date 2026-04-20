@@ -10,7 +10,7 @@
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [Fundamentals of Data Engineering, Ch 1-2](https://www.oreilly.com/library/view/fundamentals-of-data/9781098108298/) | 45 min | Clearest mapping of where Python fits in the modern data stack |
+| [Fundamentals of Data Engineering, Ch 1-2](https://amalitech-my.sharepoint.com/:b:/p/francis_class-peters/IQCvH2807IA-SLl56iB1xjHZAb4Ln0HHs8udSdJl8CoUHh8?e=uWkb5D) | 45 min | Clearest mapping of where Python fits in the modern data stack |
 | [What is Data Engineering? - YouTube](https://www.youtube.com/watch?v=qWru-b6m030) | 20 min | Quick video overview if you prefer watching |
 
 ---
@@ -75,7 +75,7 @@ logger.error(f"Failed to parse file: {e}")
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [Apache Parquet Format](https://parquet.apache.org/documentation/latest/) | 20 min | Industry standard for analytics |
+| [Apache Parquet Format](https://www.datacamp.com/tutorial/apache-parquet) | 20 min | Industry standard for analytics |
 | [Parquet vs CSV - YouTube](https://www.youtube.com/watch?v=9LYYOdIwQXg) | 12 min | Side-by-side size/speed comparison |
 
 ### Quick Reference: Format Selection

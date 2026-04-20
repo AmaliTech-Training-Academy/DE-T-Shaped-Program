@@ -10,7 +10,7 @@
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [EDA Workflow](https://towardsdatascience.com/exploratory-data-analysis-8fc1cb20fd15) | 30 min | Systematic EDA process |
+| [EDA Workflow](https://medium.com/@datageek_sk/how-i-approach-exploratory-data-analysis-eda-in-real-world-data-science-projects-d0d550b83e87) | 30 min | Systematic EDA process |
 
 ### EDA Checklist
 
@@ -98,7 +98,7 @@ def generate_eda_report(df: pd.DataFrame, output_path: Path):
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [ETL Pipeline Best Practices](https://towardsdatascience.com/etl-pipeline-best-practices-cc2cf5721c80) | 25 min | Idempotency, error handling |
+| [ETL Pipeline Best Practices](https://www.perforce.com/blog/pdx/etl-pipeline-best-practices) | 25 min | Idempotency, error handling |
 | [Testing with pytest](https://realpython.com/pytest-python-testing/) | 35 min | Unit testing pipelines |
 
 ### Idempotency Patterns

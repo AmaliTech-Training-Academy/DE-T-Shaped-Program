@@ -17,7 +17,7 @@
 
 | Resource | Time | Why |
 |----------|------|-----|
-| [Complete Pandas Tutorial - Corey Schafer](https://www.youtube.com/playlist?list=PL-osiE80TeTsWmV9i9c58mdDCSskIeRen) | 4 hrs | Best free Pandas tutorial (watch at 1.5x) |
+| [Complete Pandas Tutorial - Corey Schafer](https://www.youtube.com/watch?v=ZyhVh-qRZPA&list=PL-osiE80TeTsWmV9i9c58mdDCSskIFdDS) | 4 hrs | Best free Pandas tutorial (watch at 1.5x) |
 
 ---
 
