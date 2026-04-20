@@ -98,9 +98,9 @@ If this looks unfamiliar, complete the **Bridge Programme** first.
 
 ---
 
-## Badge Criteria
+## Completion Criteria
 
-To earn the **Python Data Engineering Practitioner** badge:
+To earn the **Python Data Engineering Practitioner**:
 
 1. Complete all **Essential** resources in each module
 2. Complete the guided Lab

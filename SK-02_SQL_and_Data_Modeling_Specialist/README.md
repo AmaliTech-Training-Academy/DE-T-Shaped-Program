@@ -94,9 +94,9 @@ If not, review Module A resources thoroughly before proceeding.
 
 ---
 
-## Badge Criteria
+## Completion Criteria
 
-To earn the **SQL and Data Modeling Specialist** badge:
+To earn the **SQL and Data Modeling Specialist**:
 
 1. Complete all **Essential** resources
 2. Complete the guided Lab (e-commerce warehouse)

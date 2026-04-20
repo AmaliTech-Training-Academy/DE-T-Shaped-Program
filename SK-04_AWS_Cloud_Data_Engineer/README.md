@@ -87,9 +87,9 @@ Lambda ←── EventBridge ←── CloudWatch ←───┘
 
 ---
 
-## Badge Criteria
+## Completion Criteria
 
-To earn the **AWS Cloud Data Engineer** badge:
+To earn the **AWS Cloud Data Engineer**:
 
 1. Complete all **Essential** resources
 2. Complete the guided Lab

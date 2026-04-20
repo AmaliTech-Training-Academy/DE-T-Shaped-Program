@@ -92,9 +92,9 @@ If this looks unfamiliar, ensure you've completed SK-01 and SK-02 first.
 
 ---
 
-## Badge Criteria
+## Completion Criteria
 
-To earn the **Batch ETL and Orchestration Engineer** badge:
+To earn the **Batch ETL and Orchestration Engineer** :
 
 1. Complete all **Essential** resources
 2. Complete the guided Lab
