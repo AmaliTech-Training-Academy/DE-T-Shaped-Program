@@ -1,218 +1,517 @@
 # Lab 02 — Power Query: Data Ingestion & Transformation
 
-> **Module:** SK-06 Power BI Analytics Practitioner
-> **Estimated time:** 6–7 hours
-> **Builds on:** Lab_01 (you saw the dirty data break a naive report). Start from a **new blank file**, not `NorthStar_Lab01.pbix` — the naive file stays as a museum piece.
-> **Produces:** `C:\PowerBI_Labs\NorthStar\pbix\NorthStar_Lab02.pbix` — all six tables ingested, cleaned, and parameterized.
+> **Goal:** Build the seven model tables of the guided lab in Power Query — the fiscal `dim_date` in M, `fact_sales` from a native SQL query, four flattened dimensions that fold to SQL, and `fact_targets` — using parameters for the server and database.
+> **Time:** 5–6 hours | **Difficulty:** Beginner → Intermediate | **Prerequisites:** Labs 00–01 (`sk06-postgres` running and loaded)
+> **Guided lab coverage:** PART 0 Step 0.5 (parameters) and PART 2 Steps 2.1–2.3
+> **Produces:** `C:\DataEngineering\sk06\pbix\NorthStar_Lab02.pbix` — seven clean tables, no relationships yet
 
-Power Query is the "E" and "T" of ETL with a GUI on top and a functional language (M) underneath. In SK-03 you wrote transformations in code; here you click them — but every click **writes code for you**, and by the end of this lab you'll read and edit that code directly.
+## Learning objectives
 
----
+By the end of this lab you can:
 
-## 1. Environment Setup
+- Explain Power Query as a recorded, replayable ETL pipeline: queries → applied steps → M code.
+- Read and edit M: `let … in`, step names, `each`, `[Column]`, case sensitivity.
+- Use **parameters** so a model can be pointed at another server without editing queries.
+- Explain **query folding**, check it with **View Native Query**, and say why steps after a native SQL query usually do not fold.
+- Build a fiscal date dimension (fiscal year starts 1 July) and verify it.
+- Flatten a normalised hierarchy (store → district → region) into one dimension with merges.
 
-Nothing new to install. Verify:
+**Key terms**
 
-1. Lab_00/Lab_01 complete; six CSVs in `C:\PowerBI_Labs\NorthStar\data\`.
-2. Open Power BI Desktop → **File → Options → Global → Power Query Editor** → ensure **"Display the Formula Bar"** is checked. You need to see the M code your clicks generate.
-3. Create the new file now: **File → Save As** → `C:\PowerBI_Labs\NorthStar\pbix\NorthStar_Lab02.pbix`.
+| Term | Meaning |
+|---|---|
+| **Query** | One table-producing recipe in Power Query. Each loaded query becomes a table in the model. |
+| **Applied steps** | The ordered list of transformations in a query. Each step is one line of M and takes the previous step's table as input. |
+| **M** | Power Query's functional, **case-sensitive** language (`Table.SelectColumns`, not `table.selectcolumns`). |
+| **Parameter** | A named value (here `ServerName`, `DatabaseName`) used inside queries — config separate from code. |
+| **Query folding** | Power Query translating steps into the source's language (SQL) so the database does the work. |
+| **Native query** | SQL you write yourself and hand to the database (`[Query = "SELECT …"]`). |
+| **Dimension / fact** | Descriptive context table (store, product, date) / table of measurable events (sales lines). Lab 03 goes deeper. |
+| **Grain** | What one row represents. `fact_sales`: one order line. `fact_targets`: one store per month. |
 
-**Common problem:** Power Query preview feels slow on VMs. Options → **Global → Data Load** → reduce "Maximum number of simultaneous evaluations" to 2–4, and remember previews sample only the top ~1000 rows — full data loads only on Close & Apply.
+### Why prepare data in Power Query?
 
----
-
-## 2. Business Context
-
-NorthStar's Monday analyst doesn't just paste charts — most of her day is **cleaning**: fixing region names typed three ways, removing return rows that shouldn't be in the sales total, chasing blank customer IDs. Industry folklore says data people spend 60–80% of their time preparing data; whatever the true number, preparation is where correctness is won or lost.
-
-Why clean **in Power Query** rather than by hand or in DAX?
-
-- **Repeatable:** hand-edits in Excel die with each new export. Power Query steps re-run identically on every refresh — clean once, benefit forever. This is the same idempotency argument from SK-03, in a GUI.
-- **Right layer:** cleaning in DAX or in visuals runs the fix on *every query, for every user*; cleaning in Power Query runs it *once per refresh*. Upstream is cheaper and safer.
+- **Repeatable:** steps re-run identically on every refresh — clean once, benefit forever (the idempotency idea from SK-03, with a GUI).
+- **Right layer:** row-level preparation done once per refresh is cheaper than repeating it in every DAX query for every user.
 - **Auditable:** the applied-steps list *is* the documentation of what was done to the data.
+- **Upstream when possible:** the guided lab pushes joins and arithmetic into PostgreSQL (native SQL or folding), so Power BI imports a narrow, finished result.
 
-Who consumes this work? Every downstream layer — the model, every measure, every visual, every decision. **If ingestion fails**, refresh fails and dashboards go stale; worse, if ingestion silently mangles data, dashboards stay fresh and *wrong*. The capstone (FR-02) makes "never silently drop rows" a contractual requirement for exactly this reason.
-
----
-
-## 3. Concept Explanation
-
-### 3.1 What Power Query is
-
-A data preparation engine embedded in Power BI (and Excel, and Fabric — the skill transfers). You define a **query** per source; each query is a sequence of **applied steps**; each step is a line of **M code**; the output loads into the model on **Close & Apply** and re-executes on every refresh.
-
-Think of it as a recorded, replayable pipeline:
+### Query folding in one picture
 
 ```mermaid
 flowchart LR
-    CSV["CSV files"] --> Q["Query = ordered applied steps<br/>(each step = one M expression)"]
-    Q --> M["Semantic model<br/>(loads on Close & Apply / Refresh)"]
+    subgraph Folds["Navigation + steps that fold"]
+      A["Source{[Schema, Item]}"] --> B["Merge / Select / Filter"] --> C["ONE SQL statement<br/>runs in PostgreSQL"]
+    end
+    subgraph Native["Native SQL source"]
+      D["Your SELECT runs in PostgreSQL"] --> E["Later M steps run<br/>locally in Power BI"]
+    end
 ```
 
-### 3.2 M in one box
+Rule of thumb: put the heavy work where it folds (or in the SQL itself); keep any steps after a native query cheap and row-by-row.
 
-M is a **functional** language: each step is an expression that takes the previous step's table and returns a new one. A generated query looks like:
+## Steps
+
+### Step 1 — Create the file, show the formula bar, add parameters
+
+1. `docker compose start` in `C:\DataEngineering\sk06` if the container is stopped.
+2. Power BI Desktop → **File → Save As** → `C:\DataEngineering\sk06\pbix\NorthStar_Lab02.pbix` (a new, empty file — Lab 01's file stays as the museum piece).
+3. **Home → Transform data** opens the **Power Query Editor**. Ribbon **View** → tick **Formula Bar**.
+4. **Home → Manage Parameters → New Parameter**, create:
+
+| Name | Type | Current value |
+|---|---|---|
+| `ServerName` | Text | `localhost:5434` |
+| `DatabaseName` | Text | `northstar` |
+
+**Why first?** Hard-coded connection strings break when the report moves (another laptop, the test server, production). In Lab 06 a deployment pipeline changes these two values per environment; nothing else changes.
+
+✅ **Checkpoint:** the Queries pane (left) lists `ServerName` and `DatabaseName`.
+
+### Step 2 — Your first query by clicking: dim_promotion
+
+1. **Home → New Source → More… → PostgreSQL database → Connect**.
+2. In *Server*, click the **ABC** dropdown at the left of the box → **Parameter** → `ServerName`. In *Database* → **Parameter** → `DatabaseName`. Mode **Import** → **OK**.
+3. Navigator: tick `sales.promotions` → **OK**.
+4. **Home → Choose Columns** → keep only `promotion_id`, `promotion_name`, `promotion_type`, `discount_pct`, `start_date`, `end_date` → **OK**.
+5. Rename the query (Query Settings pane → Name) to **`dim_promotion`**.
+6. **Home → Advanced Editor**. You will see M similar to:
 
 ```m
 let
-    Source = Csv.Document(File.Contents("C:\...\stores.csv"), [Delimiter=","]),
-    #"Promoted Headers" = Table.PromoteHeaders(Source),
-    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers", {{"store_id", Int64.Type}})
+    Source = PostgreSQL.Database(ServerName, DatabaseName),
+    sales_promotions = Source{[Schema="sales",Item="promotions"]}[Data],
+    #"Removed Other Columns" = Table.SelectColumns(sales_promotions,{"promotion_id", "promotion_name", "promotion_type", "discount_pct", "start_date", "end_date"})
 in
-    #"Changed Type"
+    #"Removed Other Columns"
 ```
 
-`let` introduces named steps; `in` returns the final one; `#"..."` quotes names containing spaces. **M is case-sensitive** (`Table.PromoteHeaders`, not `table.promoteheaders`) — the #1 beginner error when hand-editing. You rarely write M from scratch; you click, then read/adjust.
+Read it: `let` introduces named steps; each step uses the previous one; `in` returns the last. `#"…"` quotes step names that contain spaces. `Source{[Schema="sales",Item="promotions"]}[Data]` picks one table out of the database's **navigation table**.
 
-### 3.3 Order matters
+7. Replace the whole text with the guided lab's version (same logic, clearer names) → **Done**:
 
-Steps run top-to-bottom. Filter out negative quantities *before* computing an "is-return" flag and the flag can never be true. Changing types before fixing bad values turns bad values into **step-level errors**. When a query misbehaves, click through the steps one at a time and watch the preview — that's Power Query debugging.
+```m
+// dim_promotion
+let
+    Source     = PostgreSQL.Database(ServerName, DatabaseName),
+    Promotions = Source{[Schema = "sales", Item = "promotions"]}[Data],
+    Selected   = Table.SelectColumns(Promotions, {
+                     "promotion_id", "promotion_name", "promotion_type", "discount_pct",
+                     "start_date", "end_date"})
+in
+    Selected
+```
 
-### 3.4 Query folding (know it, even though CSVs can't do it)
+8. Right-click the last step (`Selected`) → **View Native Query**.
 
-Against a database source, Power Query tries to translate your steps back into **native SQL** so the database does the heavy lifting — this is **query folding**. Filters, column removal, and joins usually fold; some steps break folding, and everything after runs locally. CSVs can't fold (files can't run SQL), but in production against a warehouse you check folding via right-click a step → **View Native Query** (enabled = folding). Interviewers love this topic; the practical rule is *put foldable steps first*.
+**Expected output:** a window with SQL similar to `select "promotion_id", "promotion_name", … from "sales"."promotions"`. The whole query **folded**: PostgreSQL does the work. The preview shows **19 rows** (status bar: "19 rows"), starting with `0 · No Promotion · None`.
 
-### 3.5 Alternatives
+✅ **Checkpoint:** `dim_promotion` shows 19 rows and *View Native Query* is clickable.
 
-Cleaning could happen upstream (dbt/Spark from SK-03 — best for heavy, shared transformations), in the source extract (SQL views), or in Power Query (best when the fix is BI-specific or upstream is out of your control — very common for consultants). The wrong place is DAX or hand-edited files.
+### Step 3 — Flatten the store hierarchy: dim_store
 
----
+In the source, a store's region is three tables away (Lab 01, Failure 1). A star schema flattens it into one table.
 
-## 4. Step-by-Step Implementation
+1. **Home → New Source → Blank Query** → **Advanced Editor** → paste → **Done** → rename the query **`dim_store`**:
 
-### Step 1 — Parameterize the data folder (do this FIRST)
+```m
+// dim_store — store → district → region, flattened
+let
+    Source         = PostgreSQL.Database(ServerName, DatabaseName),
+    Stores         = Source{[Schema = "sales", Item = "stores"]}[Data],
+    Districts      = Source{[Schema = "sales", Item = "districts"]}[Data],
+    Regions        = Source{[Schema = "sales", Item = "regions"]}[Data],
+    JoinDistrict   = Table.NestedJoin(Stores, {"district_id"}, Districts, {"district_id"},
+                         "District", JoinKind.Inner),
+    ExpandDistrict = Table.ExpandTableColumn(JoinDistrict, "District",
+                         {"district_name", "region_id"}, {"district_name", "region_id"}),
+    JoinRegion     = Table.NestedJoin(ExpandDistrict, {"region_id"}, Regions, {"region_id"},
+                         "Region", JoinKind.Inner),
+    ExpandRegion   = Table.ExpandTableColumn(JoinRegion, "Region", {"region_name"}, {"region_name"}),
+    Selected       = Table.SelectColumns(ExpandRegion, {
+                         "store_id", "store_name", "city", "state", "latitude", "longitude",
+                         "district_name", "region_name"})
+in
+    Selected
+```
 
-Hard-coded paths break the moment the file moves to a colleague's machine (`C:\Users\you\...` doesn't exist for them). Fix it before creating any query:
+2. **Walk the applied steps** — click each one in the Query Settings pane and watch the preview:
+   - `JoinDistrict` adds a column `District` whose cells say *Table*: a **nested join** (= the **Merge Queries** button, inner join on `district_id`).
+   - `ExpandDistrict` opens those tables into real columns (= the ⇔ expand icon on the column header).
+   - `JoinRegion` / `ExpandRegion` repeat that for regions.
+   - `Selected` keeps only what the report needs (`district_id`, `region_id` and `open_date` are gone).
+3. Right-click `Selected` → **View Native Query**.
 
-1. **Home → Transform data** to open the Power Query editor.
-2. **Home → Manage Parameters → New Parameter**: Name `DataFolder`, Type `Text`, Current Value `C:\PowerBI_Labs\NorthStar\data\` (keep the trailing backslash) → OK.
+**Expected output:** one SQL statement with two `inner join`s — three source tables, one query, all executed by PostgreSQL. The preview has **85 rows** and 8 columns; store 101 is `NorthStar Boston #101 · Boston · MA · … · New England · Northeast`.
 
-**Why:** one edit point when the path changes — the same config-vs-code separation you practiced in SK-01/SK-03. **Verification:** `DataFolder` appears in the Queries pane on the left.
+✅ **Checkpoint:** 85 rows; `region_name` has exactly 4 distinct values (View → tick **Column distribution** to see "4 distinct").
 
-### Step 2 — Ingest stores.csv and clean the region casing
+### Step 4 — dim_product and dim_customer
 
-1. **New Source → Text/CSV** → pick `stores.csv` → **OK** (inside the editor this lands as a query, no Load/Transform choice needed).
-2. In the formula bar for the `Source` step, replace the hard-coded path so it uses the parameter:
+Same pattern. Blank Query → Advanced Editor → paste → rename.
 
-   ```m
-   = Csv.Document(File.Contents(DataFolder & "stores.csv"), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv])
-   ```
+```m
+// dim_product — product → subcategory → category, flattened
+let
+    Source         = PostgreSQL.Database(ServerName, DatabaseName),
+    Products       = Source{[Schema = "products", Item = "products"]}[Data],
+    Subcategories  = Source{[Schema = "products", Item = "subcategories"]}[Data],
+    Categories     = Source{[Schema = "products", Item = "categories"]}[Data],
+    JoinSub        = Table.NestedJoin(Products, {"subcategory_id"}, Subcategories, {"subcategory_id"},
+                         "Sub", JoinKind.Inner),
+    ExpandSub      = Table.ExpandTableColumn(JoinSub, "Sub",
+                         {"subcategory_name", "category_id"}, {"subcategory_name", "category_id"}),
+    JoinCat        = Table.NestedJoin(ExpandSub, {"category_id"}, Categories, {"category_id"},
+                         "Cat", JoinKind.Inner),
+    ExpandCat      = Table.ExpandTableColumn(JoinCat, "Cat", {"category_name"}, {"category_name"}),
+    Selected       = Table.SelectColumns(ExpandCat, {
+                         "product_id", "product_name", "brand", "subcategory_name", "category_name",
+                         "list_price"})
+in
+    Selected
+```
 
-   **Verification:** preview unchanged. If you get `Expression.Error: The name 'DataFolder' wasn't recognized`, check spelling/case — M is case-sensitive.
-3. Confirm the auto-generated **Promoted Headers** and **Changed Type** steps exist. Check types: `store_id` should be *Whole Number*, names *Text*.
-4. **Find the dirt.** Select the `region` column → **Transform ribbon → Data Preview group**: enable **Column quality / Column distribution / Column profile**. The distribution shows ~8–12 distinct region values where the business has 4 — `North`, `NORTH`, `north` counted separately. Also click **Column profile** and note it profiles the top 1000 rows unless you switch the status-bar setting to "Column profiling based on entire data set" (do that for these small files).
-5. **Fix it:** select `region` → **Transform → Format → Capitalize Each Word**, then **Transform → Format → Trim** (defensive — trailing spaces are invisible and deadly in joins).
+```m
+// dim_customer — the email column is deliberately NOT imported (personal data, not needed)
+let
+    Source       = PostgreSQL.Database(ServerName, DatabaseName),
+    Customers    = Source{[Schema = "sales", Item = "customers"]}[Data],
+    Selected     = Table.SelectColumns(Customers, {
+                       "customer_id", "first_name", "last_name", "customer_segment",
+                       "registration_date", "city", "state"}),
+    AddFullName  = Table.AddColumn(Selected, "customer_name",
+                       each [first_name] & " " & [last_name], type text)
+in
+    AddFullName
+```
 
-   ```m
-   = Table.TransformColumns(#"Changed Type", {{"region", Text.Proper, type text}})
-   ```
+Notes:
 
-   **Verification:** column distribution now shows exactly **4** distinct regions. If you still see 5+, look for trailing spaces (Trim missing) or a typo'd value that needs **Replace Values** instead.
-6. Rename the query `dim_store` (right-hand Query Settings pane → Name). Naming convention: dimensions `dim_*`, facts `fact_*` — Lab_03 relies on this.
+- `unit_cost` is not in `dim_product`: cost is computed per sales line in `fact_sales` (Step 6), so the dimension does not need it.
+- `email` is left in the database. Not importing personal data you do not need is the simplest privacy control there is (data minimisation).
+- `each [first_name] & " " & [last_name]` — `each` means "for every row"; `[col]` reads that row's column; `&` joins text.
 
-**Common mistake:** using **Replace Values** ("NORTH"→"North") for every variant — brittle; a new variant next refresh sneaks through. Prefer rule-based fixes (Proper + Trim) over enumerate-the-bad-values fixes.
+**Expected output:** `dim_product` **12,000 rows** (status bar may say "999+ rows" in the preview — the preview only samples; the full count appears after loading), with 5 distinct `category_name` values. `dim_customer` **30,000 rows**; customer 12000 is `Samuel Wilson`, segment `Value`, registered 2023-07-01.
 
-### Step 3 — Ingest the other dimensions
+✅ **Checkpoint:** both queries preview without errors, and *View Native Query* is available on `dim_product`'s last step.
 
-Repeat the pattern (New Source → parameterized path → verify types → rename):
+### Step 5 — Build the fiscal date dimension: dim_date
 
-- `products.csv` → `dim_product`. Verify 500 rows (status bar bottom-left), types: ids whole numbers, `unit_cost`/prices *Fixed decimal number* (currency-safe; avoids floating-point drift — same lesson as SK-02's `NUMERIC`).
-- `customers.csv` → `dim_customer` (2,000 rows).
-- `promotions.csv` → `dim_promotion` (12 rows). Check `start_date`/`end_date` typed as *Date* (not DateTime — dates without times compress better and join cleanly to a date dimension).
+NorthStar's fiscal year starts **1 July** and is named after the year it *ends* in: 1 July 2025 – 30 June 2026 is **FY2026**. The source has no date table, so you build one in M — owned by the BI team, visible, maintainable.
 
-**Verification for all:** no step shows an error triangle; row counts match Lab_00's numbers.
+Blank Query → Advanced Editor → paste → rename **`dim_date`**:
 
-### Step 4 — Ingest sales.csv and handle the defects properly
+```m
+// ═══════════════════════════════════════════════════════════════
+// dim_date — Complete Fiscal Date Dimension
+// Fiscal Year: July 1 (FY2026 = July 1 2025 – June 30 2026)
+// ═══════════════════════════════════════════════════════════════
+let
+    // ── Configuration ─────────────────────────────────────────
+    StartDate            = #date(2020, 1, 1),
+    EndDate              = #date(2027, 12, 31),
+    FiscalYearStartMonth = 7,   // July
 
-1. New Source → `sales.csv` → parameterize the path → rename `fact_sales`.
-2. Types: `order_date` **Date**; `quantity` Whole Number; `unit_price`, `discount_pct` Fixed decimal / Decimal; ids Whole Number. **Watch for:** if `customer_id` auto-typed as *Text*, the blank values confused detection — set it to Whole Number manually; genuine blanks become `null`, which is what we want.
-3. **Nulls (guest checkouts):** do **not** delete these rows — the sale happened; only the customer is unknown. Instead, standardize: select `customer_id` → **Transform → Replace Values** → Value to Find: `null` → Replace With: `-1`. In Lab_03 you'll add an "Unknown customer" row (`customer_id = -1`) to `dim_customer` so these sales still join. This is the classic **unknown member** pattern.
+    // ── Generate date list ─────────────────────────────────────
+    DayCount   = Duration.Days(EndDate - StartDate) + 1,
+    DateList   = List.Dates(StartDate, DayCount, #duration(1, 0, 0, 0)),
+    DateTable  = Table.FromList(DateList, Splitter.SplitByNothing(), {"Date"}),
+    TypedDate  = Table.TransformColumnTypes(DateTable, {{"Date", type date}}),
 
-   ```m
-   = Table.ReplaceValue(#"Changed Type", null, -1, Replacer.ReplaceValue, {"customer_id"})
-   ```
+    // ── Calendar attributes ────────────────────────────────────
+    AddYear          = Table.AddColumn(TypedDate, "Year", each Date.Year([Date]), Int64.Type),
+    AddMonthNum      = Table.AddColumn(AddYear, "Month Number", each Date.Month([Date]), Int64.Type),
+    AddMonthName     = Table.AddColumn(AddMonthNum, "Month Name", each Date.MonthName([Date]), type text),
+    AddMonthShort    = Table.AddColumn(AddMonthName, "Month Short",
+                           each Text.Start(Date.MonthName([Date]), 3), type text),
+    AddQuarter       = Table.AddColumn(AddMonthShort, "Quarter",
+                           each "Q" & Text.From(Date.QuarterOfYear([Date])), type text),
+    AddDayOfWeek     = Table.AddColumn(AddQuarter, "Day of Week",
+                           each Date.DayOfWeek([Date], Day.Monday) + 1, Int64.Type),
+    AddDayName       = Table.AddColumn(AddDayOfWeek, "Day Name",
+                           each Date.DayOfWeekName([Date]), type text),
+    AddWeekNum       = Table.AddColumn(AddDayName, "Week Number",
+                           each Date.WeekOfYear([Date]), Int64.Type),
+    AddIsWeekend     = Table.AddColumn(AddWeekNum, "Is Weekend",
+                           each Date.DayOfWeek([Date], Day.Monday) >= 5, type logical),
 
-4. **Negative quantities (returns):** business decision required — and the *realistic* answer is "returns are real events; keep them, but make them identifiable." Add a flag: **Add Column → Custom Column**, name `is_return`:
+    // ── Fiscal Year (starts July 1) ────────────────────────────
+    // FY2026 = July 1 2025 to June 30 2026
+    AddFiscalYear    = Table.AddColumn(AddIsWeekend, "Fiscal Year",
+                           each if Date.Month([Date]) >= FiscalYearStartMonth
+                                then Date.Year([Date]) + 1
+                                else Date.Year([Date]),
+                           Int64.Type),
 
-   ```m
-   if [quantity] < 0 then true else false
-   ```
+    // Fiscal month number: July=1, August=2, ... June=12
+    AddFiscalMonth   = Table.AddColumn(AddFiscalYear, "Fiscal Month Number",
+                           each Number.Mod(Date.Month([Date]) - FiscalYearStartMonth + 12, 12) + 1,
+                           Int64.Type),
 
-   Set its type to True/False. Do **not** filter the rows out — net revenue *should* include returns; some analyses will exclude them via the flag.
-5. **Add the revenue ingredients once, at the right layer.** Add a custom column `net_amount`:
+    // Fiscal quarter
+    AddFiscalQtr     = Table.AddColumn(AddFiscalMonth, "Fiscal Quarter",
+                           each "FQ" & Text.From(Number.RoundUp([Fiscal Month Number] / 3)),
+                           type text),
 
-   ```m
-   [quantity] * [unit_price] * (1 - [discount_pct])
-   ```
+    // ── Sort keys ──────────────────────────────────────────────
+    // Year-Month for sorting (prevents alphabetic month sort)
+    AddYearMonthSort = Table.AddColumn(AddFiscalQtr, "Year-Month Sort",
+                           each Date.Year([Date]) * 100 + Date.Month([Date]),
+                           Int64.Type),
+    AddYearMonth     = Table.AddColumn(AddYearMonthSort, "Year-Month",
+                           each Text.From(Date.Year([Date])) & "-" &
+                                Text.PadStart(Text.From(Date.Month([Date])), 2, "0"),
+                           type text),
 
-   Type: Fixed decimal number. *Why here and not DAX?* A pure row-level computation with no filter-context dependence is cheapest computed once at refresh time. (Lab_04 discusses the column-vs-measure trade-off properly — measures still do the aggregating.)
-6. **Verification:**
-   - Column quality on `customer_id`: 0% empty.
-   - Filter dropdown on `is_return`: both true and false present; true is ~1% (Lab_00 planted ~1% returns).
-   - `net_amount` spot check: pick any row, multiply by hand.
+    // ── Integer date key for relationships ────────────────────
+    // YYYYMMDD format — sorts correctly as an integer
+    AddDateKey       = Table.AddColumn(AddYearMonth, "DateKey",
+                           each Date.Year([Date]) * 10000
+                                + Date.Month([Date]) * 100
+                                + Date.Day([Date]),
+                           Int64.Type),
 
-**Troubleshooting:** a column full of `Error` after a type change = values that can't convert (e.g., text in a numeric column). Click one Error cell to read the reason; fix the value *before* the type step, or right-click the column → **Replace Errors** with `null` — but only when you've understood the cause. Blindly replacing errors is silent data loss with extra steps.
+    // ── US Federal Holidays (static list for the data range) ──
+    Holidays = #table(
+        type table [HolidayDate = date, HolidayName = text],
+        {
+            {#date(2023, 7, 4),  "Independence Day"},
+            {#date(2023, 11, 23),"Thanksgiving Day"},
+            {#date(2023, 12, 25),"Christmas Day"},
+            {#date(2024, 1, 1),  "New Year's Day"},
+            {#date(2024, 7, 4),  "Independence Day"},
+            {#date(2024, 11, 28),"Thanksgiving Day"},
+            {#date(2024, 12, 25),"Christmas Day"},
+            {#date(2025, 1, 1),  "New Year's Day"},
+            {#date(2025, 7, 4),  "Independence Day"},
+            {#date(2025, 11, 27),"Thanksgiving Day"},
+            {#date(2025, 12, 25),"Christmas Day"},
+            {#date(2026, 1, 1),  "New Year's Day"}
+        }
+    ),
 
-### Step 5 — Ingest targets.csv, and fix its shape
+    MergeHolidays    = Table.NestedJoin(AddDateKey, {"Date"}, Holidays, {"HolidayDate"},
+                           "HolidayMatch", JoinKind.LeftOuter),
+    ExpandHolidays   = Table.ExpandTableColumn(MergeHolidays, "HolidayMatch",
+                           {"HolidayName"}, {"Holiday Name"}),
+    AddIsHoliday     = Table.AddColumn(ExpandHolidays, "Is Holiday",
+                           each [Holiday Name] <> null, type logical),
 
-1. New Source → `targets.csv` → parameterize → rename `fact_targets` (96 rows: 4 regions × 24 months).
-2. Check the shape: if the file is **wide** (one column per region), it must be unpivoted — facts want one row per (month, region). Select the month column → right-click → **Unpivot Other Columns**; rename `Attribute`→`region`, `Value`→`target_revenue`. If your generated file is already tall (month, region, target), skip unpivoting — but *know* this move; reshaping wide→tall is a top-3 real-world Power Query task.
-3. Ensure `region` casing matches `dim_store`'s cleaned values (apply Proper+Trim here too — both sides of a future join must agree).
+    // ── Final output — reorder and set types ──────────────────
+    FinalTable       = Table.SelectColumns(AddIsHoliday, {
+                           "DateKey", "Date", "Year", "Month Number", "Month Name",
+                           "Month Short", "Quarter", "Day of Week", "Day Name",
+                           "Week Number", "Is Weekend", "Is Holiday", "Holiday Name",
+                           "Fiscal Year", "Fiscal Month Number", "Fiscal Quarter",
+                           "Year-Month", "Year-Month Sort"
+                       })
 
-**Verification:** 96 rows; 4 distinct regions; month column typed Date.
+in
+    FinalTable
+```
 
-### Step 6 — Close & Apply, then prove idempotency
+**How the important lines work:**
 
-1. **Home → Close & Apply.** Watch the load dialog; all six queries should load without errors.
-2. **Home ribbon → Refresh** — everything reloads and re-cleans from the raw files. Refresh **again**. Row counts identical both times (check Table view). That's idempotency: same input, same output, any number of runs.
-3. Save. This file is Lab_03's starting point.
+| Line | What it does |
+|---|---|
+| `List.Dates(StartDate, DayCount, #duration(1,0,0,0))` | A list of every day from 1 Jan 2020, one day apart. 2,922 days to 31 Dec 2027. The range covers the data (Jul 2023 – Jun 2026) with room on both sides. |
+| `Date.DayOfWeek([Date], Day.Monday) + 1` | Monday = 1 … Sunday = 7. The second argument says which day counts as the first. |
+| `if Date.Month([Date]) >= 7 then Date.Year([Date]) + 1 else Date.Year([Date])` | The fiscal-year rule: July–December belong to the *next* year's FY. |
+| `Number.Mod(Date.Month([Date]) - 7 + 12, 12) + 1` | Shifts months so July = 1 … June = 12. |
+| `"FQ" & Text.From(Number.RoundUp([Fiscal Month Number] / 3))` | Fiscal months 1–3 → FQ1, 4–6 → FQ2, … |
+| `DateKey` = `YYYY*10000 + MM*100 + DD` | An integer like `20250701` — compact and fast for relationships. |
+| `Table.NestedJoin(… JoinKind.LeftOuter)` + expand | Looks up each date in the holiday list; non-holidays get `null`. |
 
-**Expected output:** Data pane shows `dim_store`, `dim_product`, `dim_customer`, `dim_promotion`, `fact_sales`, `fact_targets`. **Common mistake:** a query set to "Enable load = off" (right-click menu) silently doesn't appear in the model — check that all six are load-enabled.
+This query has no database source, so there is nothing to fold — M generates the rows itself.
 
----
+**Verify (do not skip — an off-by-one here poisons every time-intelligence measure in Lab 05):** click the filter arrow on `Date` → **Date Filters → Equals** `2025-07-01`:
 
-## 5. Production Engineering Practices
+| Date | Fiscal Year | Fiscal Month Number | Fiscal Quarter | DateKey | Day Name |
+|---|---|---|---|---|---|
+| 2025-07-01 | 2026 | 1 | FQ1 | 20250701 | Tuesday |
 
-- **Parameterized configuration.** `DataFolder` is the module's first real config management. In production the same mechanism switches a model between Dev and Prod databases without touching queries. *Failure story:* a report worked on the developer's laptop for months; published to the Service, refresh failed instantly — hard-coded `C:\Users\dave\...`. The gateway machine had no such path. One parameter would have made it a 30-second fix.
-- **Never silently drop rows.** Every defect got an explicit, documented decision: nulls → unknown member; returns → flagged, kept. The dangerous alternative — "Remove Rows" and move on — makes totals quietly wrong forever. The capstone escalates this into a required audit table (FR-03).
-- **Rule-based cleaning over value-enumeration.** `Text.Proper` + `Text.Trim` survives new data; a list of Replace Values does not.
-- **Types are contracts.** Fixed decimal for money, Date not DateTime, whole numbers for keys. Wrong types cause wrong joins, bloated models, and floating-point pennies.
-- **Applied steps are documentation** — but only if named. Right-click any non-obvious step → Rename (e.g., `Flagged returns`), and use step **Properties → Description** for the why.
+Change the filter to `2025-06-30` → Fiscal Year **2025**, Fiscal Month Number **12**, Fiscal Quarter **FQ4**. Remove the filter step afterwards (click the ✕ next to it in Applied Steps).
 
----
+✅ **Checkpoint:** both dates show the values above and no step has an error triangle.
 
-## 6. Reflection
+### Step 6 — The fact table from native SQL: fact_sales
 
-### What you learned
+`fact_sales` combines three source tables (orders, order_lines, products) and computes revenue and cost per line. Here the guided lab writes the SQL itself and hands it to PostgreSQL.
 
-Power Query as repeatable ETL; M's let/in structure and case sensitivity; profiling tools; the unknown-member pattern; flagging vs deleting; unpivoting; parameters; query folding; idempotent refresh.
+Blank Query → Advanced Editor → paste → rename **`fact_sales`**:
 
-### Interview questions
+```m
+// ═══════════════════════════════════════════════════════════════
+// fact_sales — Sales Fact Table (grain: one row per order line)
+// The joins and revenue arithmetic run inside PostgreSQL
+// ═══════════════════════════════════════════════════════════════
+let
+    Source = PostgreSQL.Database(
+        ServerName,
+        DatabaseName,
+        [
+            Query = "
+                SELECT
+                    o.order_id,
+                    o.order_date,
+                    o.ship_date,
+                    o.customer_id,
+                    ol.product_id,
+                    ol.store_id,
+                    ol.promotion_id,
+                    ol.quantity,
+                    ol.unit_price,
+                    ol.discount_amount,
+                    ol.quantity * ol.unit_price                         AS gross_revenue,
+                    ol.quantity * ol.unit_price - ol.discount_amount    AS net_revenue,
+                    p.unit_cost * ol.quantity                           AS total_cost,
+                    CASE WHEN o.is_returned = 1 THEN 1 ELSE 0 END       AS is_returned
+                FROM   sales.orders o
+                JOIN   sales.order_lines ol ON o.order_id = ol.order_id
+                JOIN   products.products p  ON ol.product_id = p.product_id
+                WHERE  o.order_date >= DATE '2021-01-01'
+            "
+        ]
+    ),
 
-1. **What is Power Query and how does it relate to the rest of Power BI?**
-   *The ingestion/transformation layer of the .pbix. Each query is a sequence of M steps re-executed on every refresh; output loads into the semantic model. It's ETL — extract and transform — with the model as the load target.*
-2. **What is query folding and why do you care?**
-   *Power Query translating applied steps into the source's native query language (e.g., SQL) so the source does the work. It matters for performance and refresh time. Check via View Native Query; keep foldable steps early because a folding-breaking step stops folding for everything after it.*
-3. **You find null customer IDs in a sales feed. Walk me through your handling.**
-   *First diagnose the cause (guest checkout? capture bug?). Don't delete — the sales are real. Replace null with a sentinel key (−1), add an unknown-member row to the customer dimension so joins don't orphan, and surface the null rate so the business can see data quality. Deleting rows silently understates revenue.*
-4. **Where should data cleaning happen: source, pipeline, Power Query, or DAX?**
-   *As far upstream as you control. Source/pipeline fixes benefit all consumers; Power Query is right when the fix is BI-specific or upstream is out of reach; DAX is the wrong layer — it re-pays the cost on every query and hides the logic from refresh-time auditing.*
-5. **Calculated column in Power Query vs in DAX — how do you choose?**
-   *Row-level, filter-independent logic (net_amount, flags) → Power Query: computed once at refresh, compresses well, and can fold to the source. Logic depending on model relationships or filter context → DAX. Prefer upstream when both work.*
-6. **What does 'idempotent refresh' mean and how did you verify it?**
-   *Refreshing any number of times yields the same result — no duplication, no drift. Verified by refreshing twice and comparing row counts. It matters because production refreshes rerun after failures; a non-idempotent load double-counts.*
-7. **Trap: "Just use Replace Errors to make the red cells go away."**
-   *Replace Errors without diagnosis is silent data loss. First click an error to read its cause, fix the root (usually value-vs-type mismatch or step order), and only then decide whether a null replacement is legitimate — and count how many you replaced.*
+    // Date keys for the two relationships to dim_date
+    AddOrderDateKey = Table.AddColumn(Source, "OrderDateKey",
+                          each Date.Year([order_date]) * 10000
+                               + Date.Month([order_date]) * 100
+                               + Date.Day([order_date]),
+                          Int64.Type),
 
-### Common traps
+    AddShipDateKey  = Table.AddColumn(AddOrderDateKey, "ShipDateKey",
+                          each if [ship_date] = null then null
+                               else Date.Year([ship_date]) * 10000
+                                    + Date.Month([ship_date]) * 100
+                                    + Date.Day([ship_date]),
+                          Int64.Type),
 
-- Claiming CSVs query-fold (they can't — no engine behind them).
-- "I removed the bad rows" as a proud answer — interviewers hear *silent data loss*.
+    // Days between order and shipment (null = never shipped)
+    AddDaysToShip   = Table.AddColumn(AddShipDateKey, "days_to_ship",
+                          each if [ship_date] = null then null
+                               else Duration.Days([ship_date] - [order_date]),
+                          Int64.Type),
 
-### Key takeaways
+    // Gross margin calculated in Power Query (not a DAX calculated column —
+    // this is a fixed per-row value, not context-sensitive)
+    AddMargin       = Table.AddColumn(AddDaysToShip, "gross_margin",
+                          each [net_revenue] - [total_cost],
+                          Currency.Type),
 
-1. Every click writes M; read the formula bar until it stops being scary.
-2. Clean by rule, keep by default, flag what's suspect, parameterize what varies.
-3. Your six queries are now a small, idempotent, documented pipeline — the model in Lab_03 stands on them.
+    // Remove the raw date columns (relationships use date key integers)
+    RemoveDates     = Table.RemoveColumns(AddMargin, {"order_date", "ship_date"}),
 
-**Next up:** [Lab_03_Data_Modeling.md](Lab_03_Data_Modeling.md) — turn six clean tables into a star schema that can finally answer "revenue by region."
+    // Explicit types — never let Power BI infer
+    TypedTable      = Table.TransformColumnTypes(RemoveDates, {
+                          {"order_id",        Int64.Type},
+                          {"customer_id",     Int64.Type},
+                          {"product_id",      Int64.Type},
+                          {"store_id",        Int64.Type},
+                          {"promotion_id",    Int64.Type},
+                          {"quantity",        Int64.Type},
+                          {"unit_price",      Currency.Type},
+                          {"discount_amount", Currency.Type},
+                          {"gross_revenue",   Currency.Type},
+                          {"net_revenue",     Currency.Type},
+                          {"total_cost",      Currency.Type},
+                          {"is_returned",     Int64.Type}
+                      })
+
+in
+    TypedTable
+```
+
+Power Query shows **"Native Database Query — permission is required to run this native database query"**. Click **Edit Permission → Run**. (Power BI asks once per distinct SQL text, because a native query could in principle change data.)
+
+**Read the design decisions:**
+
+- **Business rules live in one place:** `net_revenue = quantity × unit_price − discount_amount` is the CFO's definition of revenue (Lab 01, Failure 2). `total_cost` uses the product's unit cost. Both are computed per line, in SQL.
+- **Only needed columns cross the wire:** `created_by`, `source_system`, `order_line_id` and `line_number` are simply not selected (Lab 01, Failure 4).
+- **Two date keys:** `OrderDateKey` (every row) and `ShipDateKey` (`null` for the ~1% of lines never shipped). Lab 03 relates both to `dim_date`.
+- **Folding:** right-click `AddOrderDateKey` → *View Native Query* is greyed out. The SQL ran on the server, but the M steps *after* a native query run locally. That is fine here — they are cheap row-by-row calculations — but heavy steps (grouping, merging big tables) belong in the SQL.
+- **`Currency.Type`** is Power BI's *Fixed decimal number*: four decimal places, no floating-point drift on money.
+
+**Expected output:** 16 columns. Filter `order_id` = 1000001 (then delete the filter step):
+
+| order_id | customer_id | product_id | store_id | quantity | unit_price | net_revenue | total_cost | gross_margin | OrderDateKey | ShipDateKey | days_to_ship |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1000001 | 12000 | 18707 | 171 | 2 | 28.22 | 56.44 | 36.34 | 20.10 | 20230701 | 20230703 | 2 |
+
+✅ **Checkpoint:** no error triangles; the row above matches.
+
+### Step 7 — The second fact: fact_targets
+
+Finance sets a revenue target **per store per month**, stamped on the 1st of the month. Blank Query → paste → rename **`fact_targets`**:
+
+```m
+// fact_targets — one row per store per month
+let
+    Source    = PostgreSQL.Database(ServerName, DatabaseName),
+    Targets   = Source{[Schema = "finance", Item = "revenue_targets"]}[Data],
+    AddKey    = Table.AddColumn(Targets, "target_date_key",
+                    each Date.Year([target_month]) * 10000
+                         + Date.Month([target_month]) * 100
+                         + Date.Day([target_month]),
+                    Int64.Type),
+    Selected  = Table.SelectColumns(AddKey, {"store_id", "target_date_key", "revenue_target"}),
+    Typed     = Table.TransformColumnTypes(Selected, {{"revenue_target", Currency.Type}})
+in
+    Typed
+```
+
+**Expected output:** the first rows are store 101 with keys `20230701` (target 8,100.00) and `20230801` (4,400.00).
+
+✅ **Checkpoint:** three columns, every `target_date_key` ends in `01`.
+
+### Step 8 — Close & Apply, check row counts, prove a refresh is repeatable
+
+1. **Home → Close & Apply**. The load dialog lists each query; `fact_sales` takes the longest.
+2. **Table view** → select each table and read the row count in the status bar:
+
+| Table | Rows |
+|---|---|
+| `dim_date` | 2,922 |
+| `dim_store` | 85 |
+| `dim_product` | 12,000 |
+| `dim_customer` | 30,000 |
+| `dim_promotion` | 19 |
+| `fact_sales` | 310,024 |
+| `fact_targets` | 3,060 |
+
+The parameters `ServerName` and `DatabaseName` are not loaded as tables — that is correct.
+
+3. **Home → Refresh**, then refresh again. The counts stay identical: same input, same output, any number of runs (idempotent refresh).
+4. Open **Model view**: Power BI may have guessed some relationships. Leave them — Lab 03 deletes and rebuilds them deliberately.
+5. **Ctrl+S**.
+
+✅ **Checkpoint:** seven tables with exactly the row counts above.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Expression.Error: The name 'ServerName' wasn't recognized` | Parameter missing or misspelt (M is case-sensitive) | Check the Queries pane; names must be exactly `ServerName` / `DatabaseName`. |
+| `Expression.SyntaxError: Token Comma expected` (or similar) | Paste was cut off or a bracket is missing | Re-paste the whole block from `let` to the final `in` line. |
+| `Expression.Error: The column 'district_name' of the table wasn't found` | A typo in a column list | Compare with the code above; column names are case-sensitive. |
+| `fact_sales` errors on the `Query` option (an older or unusual PostgreSQL connector build) | Connector does not accept `[Query = …]` | Use the generic form instead: `Source = Value.NativeQuery(PostgreSQL.Database(ServerName, DatabaseName), "SELECT … (same SQL)")`; the remaining steps are unchanged. |
+| Native Database Query prompt keeps reappearing | The SQL text changed (even whitespace) | Approve again; or File → Options → GLOBAL → Security → untick *Require user approval for new native database queries* (only on your own machine). |
+| *View Native Query* greyed out on `dim_store` | A step was added that does not fold (e.g. a custom column with complex logic) | Remove the extra step; keep foldable steps first. |
+| `fact_sales` loads but `ShipDateKey` is empty everywhere | `ship_date` column renamed or removed before `AddShipDateKey` | Steps run in order — the date columns are removed only in `RemoveDates`, after the keys are built. |
+| *DataFormat.Error* on `Currency.Type` | A text value in a money column | Should not happen with this data; check you pasted the SQL unchanged. |
+| Row counts differ from the table | Data generated differently or load script not rerun | Rerun Lab 00 Steps 7–8, then **Refresh**. |
+
+## Key takeaways
+
+- Every click writes M; read the formula bar until it stops being scary. You can always paste code into **Advanced Editor**.
+- Parameters separate configuration from logic — the model can move between servers by changing two values.
+- **Navigation + merges fold** into one SQL statement; a **native query** runs your SQL on the server, but later steps usually run locally — keep them light.
+- Shape the data for the model: flatten hierarchies into dimensions, compute row-level business rules once (`net_revenue`, `total_cost`, `gross_margin`, `days_to_ship`), import only the columns you need.
+- `dim_date` encodes NorthStar's fiscal calendar once: 2025-07-01 is FY2026, FQ1, fiscal month 1.
+
+**Interview check:** *What is query folding and why does it matter?* — Power Query translating steps into the source's query language so the source does the work; it cuts refresh time and memory. Check it with View Native Query and keep foldable steps first. *Where should data cleaning and shaping happen?* — As far upstream as you control: source/pipeline first, Power Query when it is BI-specific, never in DAX visuals.
+
+## Next
+
+[Lab 03 — Data Modeling](Lab_03_Data_Modeling.md): connect the seven tables into the guided lab's star schema — active and inactive relationships, the marked date table, and correct month sorting.

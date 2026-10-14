@@ -1,711 +1,813 @@
-# Lab 00: Environment Setup
+# Lab 00 — Environment Setup
 
-> **Module:** SK-06 Power BI Analytics Practitioner
-> **Estimated time:** 2–3 hours
-> **Previous:** [../README.md](../README.md) (module overview)
-> **Next:** [Lab_01_Power_BI_and_BI_Concepts.md](Lab_01_Power_BI_and_BI_Concepts.md)
+> **Goal:** Install and configure Power BI Desktop, run the NorthStar Retail source database (PostgreSQL 16 in Docker) filled with seeded data, and connect Power BI to it — the exact setup the guided lab starts from.
+> **Time:** 2–3 hours | **Difficulty:** Beginner | **Prerequisites:** Windows 10/11 64-bit PC with admin rights, 8 GB RAM, ~10 GB free disk space
+> **Guided lab coverage:** PART 0 of `SK-06_End_to_End_Guided_Lab.md` (Steps 0.1–0.5)
 
-Welcome to the first lab of SK-06. This lab does the unglamorous but critical work: installing Power BI Desktop the right way, configuring the settings that most beginners never touch (and later regret), building a clean folder structure, and generating the **NorthStar Retail** dataset you will use in every subsequent lab.
+## Learning objectives
 
-Do not skip or skim this lab. Roughly a third of "Power BI is broken" complaints from beginners trace back to something this lab prevents.
+By the end of this lab you can:
 
----
+- Explain what Power BI Desktop is made of (Power Query, the VertiPaq model, DAX, the report canvas) and how it differs from the Power BI Service.
+- Install Power BI Desktop and switch off **Auto date/time** — the default that silently bloats models and uses the wrong calendar for NorthStar.
+- Create the SK-06 project folder `C:\DataEngineering\sk06` and explain why it must not live in OneDrive.
+- Start PostgreSQL 16 in Docker, generate the NorthStar data with a **seeded** Python script, and load it.
+- Connect Power BI Desktop to the database and check the data against SQL **control totals**.
 
-## Table of Contents
+**Key terms**
 
-1. [Environment Setup](#1-environment-setup)
-2. [Business Context](#2-business-context)
-3. [Concept Explanation](#3-concept-explanation)
-4. [Step-by-Step Implementation](#4-step-by-step-implementation)
-5. [Production Engineering Practices](#5-production-engineering-practices)
-6. [Reflection](#6-reflection)
-
----
-
-## 1. Environment Setup
-
-This entire lab *is* environment setup, so this section covers requirements and installation, and Section 4 walks through everything step by step with verification.
-
-### 1.1 What you need
-
-| Requirement | Detail |
+| Term | Meaning |
 |---|---|
-| Operating system | Windows 10 or Windows 11 (64-bit). This module assumes **Windows 11**. |
-| RAM | 8 GB recommended (4 GB absolute minimum — Power BI holds your data model in memory) |
-| Disk | ~2 GB free (app + lab data) |
-| Account | None required for this module. A work/school email is only needed if you later sign in to the Power BI Service — we stay in Desktop. |
-| Cost | **$0.** Power BI Desktop is completely free. |
+| **Power BI Desktop** | Free Windows app where you build queries, the data model and the report. Saved as one `.pbix` file. |
+| **Power BI Service** | The cloud portal (app.powerbi.com) where reports are published, shared, refreshed and secured. Covered in Lab 06. |
+| **Power Query / M** | The data-preparation engine inside Power BI. Every click writes code in a language called **M** (Lab 02). |
+| **VertiPaq** | The in-memory, **columnar** engine that stores imported data. A column with few distinct values (4 regions) compresses to almost nothing. |
+| **DAX** | Data Analysis Expressions — the formula language for measures (Labs 04–05). |
+| **Auto date/time** | A Power BI default that creates a hidden calendar table for every date column. We switch it off. |
+| **OLTP source** | The operational database the business runs on. NorthStar's has 11 normalised tables. |
+| **Seed** | A fixed starting value for a random-number generator. Same seed → same "random" data on every PC. |
+| **Container / image / volume** | A running isolated program (`sk06-postgres`), the template it starts from (`postgres:16`), and the storage that survives restarts (`sk06_pgdata`). |
 
-> **macOS users — read this now.** Power BI Desktop is **Windows-only**. There is no Mac version and no plan for one. Your options: (a) a Windows 11 VM via Parallels or VMware Fusion, (b) a cloud Windows VM (e.g., an AWS EC2 Windows instance — you know how from SK-04), or (c) a spare Windows machine. Give the VM at least 8 GB RAM. Everything else in this module works identically inside the VM.
+**Scenario.** NorthStar Retail has 85 stores in 4 regions, 12,000 SKUs (a SKU — stock-keeping unit — is one distinct sellable product) and 5 product categories. Every Monday the CFO gets a 40-page Excel report that three analysts compile over the weekend. Across Labs 01–06 you build its replacement: one Power BI dashboard. This lab builds your workshop and your data.
 
-### 1.2 Two ways to install Power BI Desktop
+> **macOS / Linux:** Power BI Desktop is **Windows-only**. Use a Windows 11 virtual machine (Parallels, VMware Fusion, or a cloud Windows VM) with at least 8 GB RAM, and do every step inside it.
 
-You will pick ONE of these in Section 4. Both are official and free; they differ in how updates happen.
-
-| | Option A: Microsoft Store (recommended) | Option B: Direct download (.exe installer) |
-|---|---|---|
-| Where | Microsoft Store app, search "Power BI Desktop" | `https://www.microsoft.com/download` → search "Power BI Desktop" |
-| Updates | **Automatic** — the Store updates it in the background | **Manual** — you download and rerun the installer each month |
-| Admin rights needed | No | Yes (typical corporate blocker) |
-| Best for | Personal machines, this course | Locked-down corporate machines, or when IT pins a specific version |
-
-**Version guidance:** Power BI Desktop ships a new release **every month**. Always use the **latest stable** version — there is no "LTS" for Desktop, and Microsoft only supports recent versions for publishing. You check your version via **Help > About** (covered in Step 3 below). During this module, if a ribbon button is in a slightly different place than described, a monthly update probably moved it — the concepts never change that fast.
-
-### 1.3 Optional tools (install later, not today)
-
-Two free community-standard tools are referenced in later labs. **Do not install them now** — just know they exist so the names aren't alien later:
-
-- **DAX Studio** (free, `daxstudio.org`) — a query and performance tool for the model inside your .pbix. Used optionally in Lab_04–Lab_06 for measuring query speed.
-- **Tabular Editor 2** (free, `tabulareditor.com`) — an external model editor that lets you create/edit many measures at once. Used optionally from Lab_03 onward. (Tabular Editor **3** is paid; version **2** is free and is what we mean.)
-
-### 1.4 Folder structure
-
-All lab work lives under `C:\PowerBI_Labs\` — created by script in Section 4. Keeping lab files out of `Downloads` and OneDrive-synced folders avoids two classic problems: files auto-syncing mid-save (corrupting .pbix files) and "I can't find my data source" path chaos.
-
----
-
-## 2. Business Context
-
-### The problem this lab solves
-
-Meet **NorthStar Retail**: a mid-market retail chain with **85 stores** across **4 regions**, selling **12,000 SKUs** in **5 product categories**. (A *SKU* — stock-keeping unit — is simply a distinct sellable product; a red T-shirt in size M is a different SKU from the same shirt in size L.)
-
-Every Monday morning, an analyst named Kwame spends 6+ hours exporting data, copying it into Excel, fixing broken cell references, and emailing a **40-page report** to the CFO. By the time she reads it, the data is a week old. Twice last quarter, a copy-paste error made a region's revenue look 30% lower than reality, and a district manager got an angry phone call for nothing.
-
-Your mission across Labs 01–06 is to replace that report with an interactive Power BI dashboard. But before you can analyze anything, you need two things: a working tool, and data. That is this lab.
-
-### Why environment setup matters in industry
-
-In a real job, "install the tool" is rarely trivial:
-
-- **IT restrictions** decide whether you can use the Store or need the .exe with an admin ticket.
-- **Version drift** across a team ("works on my machine, my Power BI is from 2024") causes files that open with warnings or subtle behavioral differences.
-- **Default settings** — especially **Auto date/time**, which we disable in this lab — silently bloat models. Consultants regularly find client models where *half the file size* is invisible auto-generated date tables.
-- **Test data generation** is a genuine professional skill. You cannot practice on production data (privacy, access), so engineers create *synthetic data* — realistic but fake. Our PowerShell generation script even injects deliberate data-quality problems, because real data is never clean and you need something to fix in Lab_02.
-
-### Who consumes the output of this lab?
-
-You do — every later lab assumes this environment exactly as built here. In a company, the "consumer" of an environment-setup document is *the next new hire*: a good setup guide turns a week of onboarding friction into an afternoon.
-
-### What happens if this goes wrong?
-
-- Skip disabling Auto date/time → your Lab_03 model carries seven hidden date tables, your file is several times larger than needed, and your Lab_06 performance tuning fights ghosts.
-- Put files in a OneDrive folder → a sync conflict one day corrupts your only copy of the model.
-- Generate data without a fixed random seed → your numbers won't match the lab checkpoints and you can't tell whether *you* made a mistake or the data is just different.
-
----
-
-## 3. Concept Explanation
-
-Even a setup lab has concepts worth understanding rather than cargo-culting.
-
-### 3.1 What is Power BI Desktop, actually?
-
-**Power BI Desktop** is a free Windows application that bundles three engines into one tool:
-
-1. **Power Query** (the "mashup engine") — connects to data sources and transforms data. Think of it as visual ETL: the same extract-transform-load work you scripted in SK-03, driven through a UI that writes code (in a language called **M**) for you.
-2. **The VertiPaq storage engine** — an in-memory, **columnar** database that compresses your data and holds it in RAM. *Columnar* means data is stored column-by-column instead of row-by-row, which compresses beautifully when a column has repeated values (a `region` column with 4 distinct values across 50,000 rows compresses to almost nothing). This is the same family of idea behind Parquet from SK-03/SK-04.
-3. **The DAX formula/query engine** — evaluates calculations (measures) written in **DAX** (Data Analysis Expressions) against the model.
-
-Everything you build gets saved into a single **`.pbix` file** — a zip-like container holding your queries, model, data, and report pages. (Lab_01 dissects a .pbix in detail.)
-
-**Alternatives, for perspective:** Tableau (strong visuals, separate prep tool, more expensive), Looker (code-first semantic layer, Google-owned), Apache Superset / Metabase (open source, lighter modeling), plain Excel (ubiquitous but breaks at scale — see: Kwame's Mondays). Power BI's pros: price (free Desktop, cheap licensing bundled with Microsoft 365), one integrated tool for prep+model+visuals, huge job market. Cons: Windows-only authoring, DAX has a real learning curve, and the best sharing features require paid cloud licensing.
-
-### 3.2 Why "latest version, updated monthly" is the rule
-
-Power BI Desktop has no long-term-support versions. Microsoft releases monthly; features preview, then generalize. A .pbix saved in a newer version may not open in an older one (**forward compatibility is not guaranteed**), which is exactly why teams standardize on "everyone updates monthly." The Microsoft Store install makes this automatic — the main reason it is our recommended path.
-
-### 3.3 What Auto date/time is, and why we turn it off
-
-By default, for **every date/datetime column** in your model, Power BI silently creates a **hidden date table** (with year/quarter/month/day columns) so drag-and-drop date hierarchies "just work" for absolute beginners.
-
-Sounds friendly. Here's the tax:
-
-- **Bloat:** NorthStar's `sales.csv` alone has `order_date` and `ship_date` — two hidden tables. Add dimension dates and you can end up with many hidden tables covering every year appearing anywhere in the data. In real models this is routinely 30–60% of file size.
-- **Wrong calendar:** the hidden tables use the **calendar year (Jan–Dec)**. NorthStar's **fiscal year starts July 1**. Every auto-hierarchy "Year" would be *wrong for this business*, invisibly.
-- **Broken habits:** professionals always build **one explicit date dimension** (`dim_date`, built in Lab_03) that all facts share. Auto date/time actively hides the need for it.
-
-So we disable it globally today, before you ever load data. This single checkbox is arguably the most important setting in this lab.
-
-### 3.4 Synthetic data and seeded randomness
-
-The generation script uses PowerShell's `Get-Random` with a **fixed seed**. A *seed* initializes the pseudo-random number generator so it produces the *same* "random" sequence every run. Why it matters: reproducibility. Your dataset matches the lab checkpoints, your classmate's dataset matches yours, and rerunning the script after a mistake gives identical data. (Same principle as seeding `random` in SK-01 Python tests.)
-
-The script also plants three defects on purpose — **null customer IDs** (guest checkouts / capture failures), **negative quantities** (returns entered as sales), and **mixed-case region names** (`North` vs `NORTH` vs `north`, classic multi-system inconsistency). Lab_02 exists to find and fix these. Meeting dirty data in Lab_02 with tools, rather than in production with a pager, is the point.
-
----
-
-## 4. Step-by-Step Implementation
-
-Work through these in order. Each step tells you **what**, **why**, **expected output**, **how to verify**, **common mistakes**, and **troubleshooting**.
+## Steps
 
 ### Step 1 — Check your system
 
-**What:** Confirm Windows version and free resources. Open **PowerShell** (press `Win`, type `powershell`, Enter — no admin needed) and run:
+Open **PowerShell** (press `Win`, type `powershell`, Enter — no admin needed) and run:
 
 ```powershell
-# OS version, RAM, and free space on C:
-Get-ComputerInfo -Property OsName, OsVersion, CsTotalPhysicalMemory |
-    Format-List
-Get-PSDrive C | Select-Object Used, Free
+Get-ComputerInfo -Property OsName, OsVersion, CsTotalPhysicalMemory | Format-List
+"RAM (GB): " + [math]::Round((Get-ComputerInfo).CsTotalPhysicalMemory / 1GB, 1)
+Get-PSDrive C | Select-Object @{n='FreeGB'; e={[math]::Round($_.Free / 1GB, 1)}}
 ```
 
-**Why:** Power BI Desktop requires 64-bit Windows and holds models in RAM; better to find a constraint now than mid-lab.
+**Why:** Power BI holds the whole data model in RAM, and Docker needs disk space for the database image.
 
-**Expected output:** `OsName` shows Windows 10/11; `CsTotalPhysicalMemory` ≥ ~8 GB (8589934592 bytes); `Free` on C: ≥ 2 GB.
+**Expected output:** `OsName` shows Windows 10 or 11, `RAM (GB)` is about 8 or more, `FreeGB` is 10 or more.
 
-**Verify:** the numbers meet the table in Section 1.1.
-
-**Common mistakes:** Reading `CsTotalPhysicalMemory` as GB — it's bytes. Divide by 1GB mentally or run `(Get-ComputerInfo).CsTotalPhysicalMemory / 1GB`.
-
-**Troubleshooting:** On macOS/Linux you cannot run this at all — set up your Windows VM first (Section 1.1 note), then continue *inside* the VM.
-
----
+✅ **Checkpoint:** Windows 64-bit, ≥ 8 GB RAM, ≥ 10 GB free on C:.
 
 ### Step 2 — Install Power BI Desktop
 
-**What:** Choose ONE option.
+Choose ONE option:
 
-**Option A — Microsoft Store (recommended):**
-
-1. Press `Win`, type `Microsoft Store`, Enter.
-2. Search for **Power BI Desktop** (publisher: Microsoft Corporation).
-3. Click **Get** / **Install**. Wait for completion (~500 MB download).
-
-Or install from PowerShell using winget (ships with Windows 11):
-
-```powershell
-winget install --id Microsoft.PowerBI --source winget --accept-package-agreements
-```
-
-> Note: the winget package installs the .exe distribution; installing via the Store app itself is what gives you auto-updates. If auto-updates matter to you (they should), use the Store UI.
-
-**Option B — Direct download:**
-
-1. Browse to `https://aka.ms/pbidesktopstore` fails? Use `https://www.microsoft.com/en-us/download/details.aspx?id=58494`.
-2. Download `PBIDesktopSetup_x64.exe` (64-bit).
-3. Run it, accept defaults, finish. Requires local admin rights.
-
-**Why:** Store = automatic monthly updates, no admin. Direct = works under corporate IT policies and lets you archive a specific installer version.
-
-**Expected output:** "Power BI Desktop" appears in the Start menu.
-
-**Verify:** Launch it. First run may show a sign-in prompt — **you can close/skip it**; no account is needed for this module. You should land on a blank report canvas (possibly behind a welcome dialog — close the dialog).
-
-**Common mistakes:**
-- Installing 32-bit from an old link — always x64.
-- Installing "Power BI" the *mobile-style viewer app* from the Store instead of "Power BI **Desktop**". Check the name exactly.
-
-**Troubleshooting (common install problems + fixes):**
-
-| Problem | Fix |
-|---|---|
-| Store button greyed out / Store blocked by IT | Use Option B, or ask IT to deploy it; mention it needs monthly updates |
-| .exe install fails with "administrator privileges required" | Right-click → Run as administrator, or get IT to elevate |
-| Error `WebView2 Runtime` missing/failed | Install "Microsoft Edge WebView2 Runtime" from Microsoft's site, then reinstall — Power BI's UI depends on it |
-| App launches then immediately closes | Update GPU drivers; if on a VM, enable 3D acceleration or add `DisableGPUAcceleration` via Options once you can open it |
-| Extremely slow first launch | Normal once (it compiles caches); subsequent launches are faster |
-| Sign-in loop on a corporate machine | Skip sign-in entirely — Desktop authoring never requires it |
-
----
-
-### Step 3 — Check your version (Help > About)
-
-**What:** In Power BI Desktop: **File > Help > About** (in current releases: **File**, then **About** under Help; or the `?` Help ribbon tab > **About**).
-
-**Why:** You'll be asked "what version are you on?" constantly — by lab troubleshooting notes, forums, and colleagues. Versions are named by month, e.g. `2.14x.xxxx.xxxx (25.06)` style strings where the marketing name is like "June 2025".
-
-**Expected output:** A dialog showing **Version** and **release month**. If it's more than ~2 months old, update (Store: Library > Get updates; Direct: download the newest installer).
-
-**Verify:** Note your version somewhere — you'll record it again in Step 8's verification file.
-
-**Common mistakes:** None serious. Just know where this dialog lives.
-
-**Troubleshooting:** If About shows an old version right after a Store install, the Store cached a stale package — open Microsoft Store > Library > Get updates.
-
----
-
-### Step 4 — Configure critical options (including disabling Auto date/time)
-
-**What:** In Power BI Desktop go to **File > Options and settings > Options**, then change:
-
-1. **Global > Data Load** → under *Time intelligence*, **uncheck "Auto date/time for new files"**. ← the big one; see Section 3.3 for the full why. Global means every *future* file starts clean.
-2. **Current File > Data Load** → uncheck **"Auto date/time"** too (belt and braces for the currently open file).
-3. **Global > Report settings** (optional but recommended) → check any available option to disable default interaction surprises later; leave defaults if unsure.
-4. **Global > Preview features** → leave everything **as-is**. Preview features change monthly; the labs use only generally-available features so instructions stay stable.
-5. Click **OK**.
-
-**Why:** Auto date/time bloats models and imposes a Jan–Dec calendar on a July-fiscal-year business (Section 3.3). Doing it now, globally, means you never have to remember it again.
-
-**Expected output:** Options dialog closes without error.
-
-**Verify:** Reopen Options → Global > Data Load → the Auto date/time checkbox is unchecked and stays unchecked.
-
-**Common mistakes:**
-- Unchecking only **Current File** and not **Global** — next lab's new file re-enables it silently.
-- Confusing this with "Auto detect new relationships" (a different Data Load option — leave that at default for now; Lab_03 discusses it).
-
-**Troubleshooting:** If the setting seems to "come back," you almost certainly changed Current File only. Global is the top section of the left-hand list in the Options dialog.
-
----
-
-### Step 5 — Create the lab folder structure
-
-**What:** In PowerShell:
-
-```powershell
-# Create the SK-06 working folders
-New-Item -ItemType Directory -Force -Path `
-    "C:\PowerBI_Labs\NorthStar\data",
-    "C:\PowerBI_Labs\NorthStar\pbix",
-    "C:\PowerBI_Labs\NorthStar\scripts" | Out-Null
-
-Get-ChildItem -Recurse "C:\PowerBI_Labs" | Select-Object FullName
-```
-
-**Why:** One predictable root, outside OneDrive/Downloads (Section 1.4). `data` holds CSVs, `pbix` holds versioned Power BI files, `scripts` holds this lab's generator script.
-
-**Expected output:** Three folder paths listed.
-
-**Verify:** `Test-Path C:\PowerBI_Labs\NorthStar\data` returns `True`.
-
-**Common mistakes:** Creating the folders inside OneDrive's redirected Desktop/Documents. `C:\PowerBI_Labs` at the drive root avoids redirection entirely.
-
-**Troubleshooting:** "Access denied" at `C:\` root is rare but possible on locked-down machines — fall back to `C:\Users\<you>\PowerBI_Labs` and mentally substitute that path in every later lab (or better: ask IT).
-
----
-
-### Step 6 — Generate the NorthStar dataset
-
-**What:** This is the heart of the lab. Save the following as `C:\PowerBI_Labs\NorthStar\scripts\Generate-NorthStarData.ps1` (create the file in Notepad/VS Code and paste, or type it — pasting is acceptable for this one), then run it.
-
-The script generates six CSVs into `C:\PowerBI_Labs\NorthStar\data`:
-
-| File | ~Rows | Becomes (Lab_03) |
+| | **Option A: Microsoft Store (recommended)** | **Option B: Direct download** |
 |---|---|---|
-| `stores.csv` | 85 | `dim_store` (store → district → region) |
-| `products.csv` | 500 | `dim_product` (product → subcategory → category) |
-| `customers.csv` | 2,000 | `dim_customer` |
-| `promotions.csv` | 12 | `dim_promotion` |
-| `sales.csv` | 50,000 | `fact_sales` (grain: one row per order **line item**) |
-| `targets.csv` | 96 | `fact_targets` (monthly revenue target per region) |
+| How | Press `Win`, open **Microsoft Store**, search **Power BI Desktop** (publisher Microsoft Corporation), click **Get** | <https://www.microsoft.com/en-us/download/details.aspx?id=58494> → download `PBIDesktopSetup_x64.exe` → run it |
+| Updates | Automatic, monthly | Manual — rerun a new installer each month |
+| Admin rights | Not needed | Needed |
 
-> Yes, real NorthStar has 12,000 SKUs and millions of sales rows. We generate a 500-SKU / 50,000-row *representative sample* so everything stays fast on a laptop. The modeling techniques are identical at any scale.
+Power BI Desktop ships a new version **every month** and has no long-term-support version. A `.pbix` saved in a newer version may not open in an older one, so teams agree to stay current — the Store does that for you.
 
-It deliberately injects **~2% null customer_ids**, **~1% negative quantities (returns)**, and **mixed-case region names** in stores.csv — Lab_02's cleaning material.
+Launch Power BI Desktop. If it asks you to sign in, close the dialog — no account is needed until Lab 06.
+
+**Expected output:** a blank report canvas.
+
+**Check your version:** **Help** ribbon → **About**. Note the version and release month (for example "June 2026").
+
+✅ **Checkpoint:** Power BI Desktop opens and **Help → About** shows a version from the last two months.
+
+### Step 3 — Switch off Auto date/time
+
+**File → Options and settings → Options**:
+
+1. **GLOBAL → Data Load** → under *Time intelligence*, **uncheck "Auto date/time for new files"**.
+2. **CURRENT FILE → Data Load** → uncheck **"Auto date/time"**.
+3. Leave **Preview features** as they are. Click **OK**.
+
+**Why this matters for NorthStar:**
+
+- **Bloat.** Power BI would build a hidden calendar table for *every* date column (order date, ship date, registration date, promotion start/end …). In real models this is often a third or more of the file size.
+- **Wrong calendar.** The hidden tables use January–December. NorthStar's **fiscal year starts 1 July** (FY2026 = 1 July 2025 – 30 June 2026). Every auto "Year" would be wrong for this business.
+- **Broken habit.** Professionals build *one* explicit date table (`dim_date`, Lab 02) that every fact shares.
+
+✅ **Checkpoint:** reopen Options → **GLOBAL → Data Load**: the box is still unchecked. (If it "comes back" in a new file, you only changed CURRENT FILE.)
+
+### Step 4 — Create the project folder
 
 ```powershell
-<#
-.SYNOPSIS
-    Generates the NorthStar Retail synthetic dataset for SK-06.
-.NOTES
-    Seeded (deterministic): rerunning produces identical data.
-    Deliberate data-quality issues are injected for Lab_02:
-      - ~2% of sales rows have a null customer_id
-      - ~1% of sales rows have negative quantity (returns)
-      - region names in stores.csv use inconsistent casing
-#>
-
-$ErrorActionPreference = 'Stop'
-$dataDir = 'C:\PowerBI_Labs\NorthStar\data'
-New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-
-# Fixed seed => reproducible output. Do not change 4242 or your
-# numbers will not match the lab checkpoints.
-Get-Random -SetSeed 4242 | Out-Null
-
-Write-Host 'Generating NorthStar data (seed 4242)...' -ForegroundColor Cyan
-
-# ---------------------------------------------------------------
-# 1. STORES: 85 stores, 4 regions, districts under regions
-#    NOTE: region casing is intentionally inconsistent (Lab_02!)
-# ---------------------------------------------------------------
-$regionVariants = @{
-    'North' = @('North','NORTH','north')
-    'South' = @('South','SOUTH','south')
-    'East'  = @('East','EAST','east')
-    'West'  = @('West','WEST','west')
-}
-$regions   = @('North','South','East','West')
-$cities    = @('Springfield','Riverton','Lakeview','Fairmont','Oakdale',
-               'Brookside','Hillcrest','Maplewood','Cedarburg','Ashford',
-               'Kingsport','Elmwood','Granville','Westbrook','Northgate')
-$formats   = @('Flagship','Standard','Standard','Standard','Outlet')
-
-$stores = for ($i = 1; $i -le 85; $i++) {
-    $region   = $regions[($i - 1) % 4]
-    # 5-6 districts per region, e.g. North-D1..North-D6
-    $district = '{0}-D{1}' -f $region, ((Get-Random -Minimum 1 -Maximum 7))
-    # Inject casing inconsistency on ~40% of rows
-    $regionOut = if ((Get-Random -Minimum 1 -Maximum 101) -le 40) {
-        $regionVariants[$region] | Get-Random
-    } else { $region }
-    [pscustomobject]@{
-        store_id     = 'ST{0:d3}' -f $i
-        store_name   = '{0} {1}' -f ($cities | Get-Random), ($formats | Get-Random)
-        district     = $district
-        region       = $regionOut
-        open_date    = (Get-Date '2015-01-01').AddDays((Get-Random -Minimum 0 -Maximum 2555)).ToString('yyyy-MM-dd')
-        square_feet  = Get-Random -Minimum 8000 -Maximum 45000
-    }
-}
-$stores | Export-Csv -NoTypeInformation -Path (Join-Path $dataDir 'stores.csv')
-Write-Host ('  stores.csv      : {0,6} rows' -f $stores.Count)
-
-# ---------------------------------------------------------------
-# 2. PRODUCTS: ~500 products, 5 categories, subcategories
-# ---------------------------------------------------------------
-$catalog = @{
-    'Apparel'        = @('Shirts','Trousers','Outerwear','Footwear')
-    'Electronics'    = @('Audio','Mobile Accessories','Computing','Smart Home')
-    'Home & Garden'  = @('Kitchen','Furniture','Decor','Garden Tools')
-    'Grocery'        = @('Snacks','Beverages','Pantry','Frozen')
-    'Sports & Toys'  = @('Fitness','Outdoor','Board Games','Toys')
-}
-$adjectives = @('Classic','Premium','Eco','Ultra','Compact','Deluxe','Everyday','Pro')
-$products = @()
-$p = 0
-foreach ($cat in ($catalog.Keys | Sort-Object)) {
-    foreach ($sub in $catalog[$cat]) {
-        # 25 products per subcategory => 5 cats x 4 subs x 25 = 500
-        for ($j = 1; $j -le 25; $j++) {
-            $p++
-            $cost = [math]::Round((Get-Random -Minimum 200 -Maximum 15000) / 100, 2)
-            $products += [pscustomobject]@{
-                product_id   = 'P{0:d4}' -f $p
-                product_name = '{0} {1} #{2}' -f ($adjectives | Get-Random), $sub, $j
-                subcategory  = $sub
-                category     = $cat
-                unit_cost    = $cost
-                list_price   = [math]::Round($cost * ((Get-Random -Minimum 130 -Maximum 220) / 100), 2)
-            }
-        }
-    }
-}
-$products | Export-Csv -NoTypeInformation -Path (Join-Path $dataDir 'products.csv')
-Write-Host ('  products.csv    : {0,6} rows' -f $products.Count)
-
-# ---------------------------------------------------------------
-# 3. CUSTOMERS: ~2000 loyalty-program customers
-# ---------------------------------------------------------------
-$firstNames = @('Ama','Kwame','Efua','Kofi','Sarah','James','Linda','David',
-                'Grace','Michael','Akosua','Yaw','Esi','Daniel','Rita','Paul',
-                'Naomi','Victor','Abena','Samuel')
-$lastNames  = @('Mensah','Owusu','Johnson','Smith','Boateng','Brown','Asante',
-                'Williams','Osei','Davis','Appiah','Miller','Addo','Wilson',
-                'Agyeman','Taylor','Ansah','Clark','Frimpong','Lewis')
-$tiers = @('Bronze','Bronze','Bronze','Silver','Silver','Gold')
-
-$customers = for ($i = 1; $i -le 2000; $i++) {
-    [pscustomobject]@{
-        customer_id   = 'C{0:d5}' -f $i
-        customer_name = '{0} {1}' -f ($firstNames | Get-Random), ($lastNames | Get-Random)
-        loyalty_tier  = $tiers | Get-Random
-        signup_date   = (Get-Date '2020-01-01').AddDays((Get-Random -Minimum 0 -Maximum 1900)).ToString('yyyy-MM-dd')
-        home_region   = $regions | Get-Random
-    }
-}
-$customers | Export-Csv -NoTypeInformation -Path (Join-Path $dataDir 'customers.csv')
-Write-Host ('  customers.csv   : {0,6} rows' -f $customers.Count)
-
-# ---------------------------------------------------------------
-# 4. PROMOTIONS: 12 promotions over the two fiscal years
-# ---------------------------------------------------------------
-$promoNames = @('Back to School','Holiday Blowout','New Year Fresh Start',
-                'Spring Refresh','Summer Clearance','Anniversary Sale')
-$promotions = @()
-$promoId = 0
-foreach ($year in @(2023, 2024)) {
-    foreach ($pn in $promoNames) {
-        $promoId++
-        $start = (Get-Date ('{0}-07-01' -f $year)).AddDays((Get-Random -Minimum 0 -Maximum 330))
-        $promotions += [pscustomobject]@{
-            promotion_id   = 'PR{0:d2}' -f $promoId
-            promotion_name = '{0} {1}' -f $pn, $start.Year
-            discount_pct   = @(5, 10, 15, 20, 25) | Get-Random
-            start_date     = $start.ToString('yyyy-MM-dd')
-            end_date       = $start.AddDays((Get-Random -Minimum 7 -Maximum 21)).ToString('yyyy-MM-dd')
-        }
-    }
-}
-$promotions | Export-Csv -NoTypeInformation -Path (Join-Path $dataDir 'promotions.csv')
-Write-Host ('  promotions.csv  : {0,6} rows' -f $promotions.Count)
-
-# ---------------------------------------------------------------
-# 5. SALES: 50,000 order line items, 2023-07-01 .. 2025-06-30
-#    Grain: one row per order line item.
-#    Injected issues: null customer_id (~2%), negative qty (~1%)
-# ---------------------------------------------------------------
-$startDate = Get-Date '2023-07-01'
-$daySpan   = 730   # two fiscal years
-$rows      = 50000
-$sales     = New-Object System.Collections.Generic.List[object]
-
-for ($i = 1; $i -le $rows; $i++) {
-    $orderDate = $startDate.AddDays((Get-Random -Minimum 0 -Maximum $daySpan))
-    $product   = $products[(Get-Random -Minimum 0 -Maximum $products.Count)]
-
-    # ~2% missing customer_id (guest checkout / capture failure)
-    $custId = if ((Get-Random -Minimum 1 -Maximum 101) -le 2) { $null }
-              else { 'C{0:d5}' -f (Get-Random -Minimum 1 -Maximum 2001) }
-
-    # ~1% returns recorded as negative quantities
-    $qty = if ((Get-Random -Minimum 1 -Maximum 101) -le 1) {
-               -1 * (Get-Random -Minimum 1 -Maximum 4)
-           } else { Get-Random -Minimum 1 -Maximum 6 }
-
-    # ~25% of lines carry a promotion
-    $promo = if ((Get-Random -Minimum 1 -Maximum 101) -le 25) {
-                 'PR{0:d2}' -f (Get-Random -Minimum 1 -Maximum 13)
-             } else { $null }
-
-    $discount = if ($promo) { @(0.05, 0.10, 0.15, 0.20, 0.25) | Get-Random } else { 0 }
-
-    $sales.Add([pscustomobject]@{
-        order_id     = 'SO{0:d7}' -f (($i + 999) - ((Get-Random -Minimum 0 -Maximum 3)))  # some multi-line orders
-        order_date   = $orderDate.ToString('yyyy-MM-dd')
-        ship_date    = $orderDate.AddDays((Get-Random -Minimum 1 -Maximum 8)).ToString('yyyy-MM-dd')
-        store_id     = 'ST{0:d3}' -f (Get-Random -Minimum 1 -Maximum 86)
-        product_id   = $product.product_id
-        customer_id  = $custId
-        quantity     = $qty
-        unit_price   = $product.list_price
-        discount     = $discount
-        promotion_id = $promo
-    })
-
-    if ($i % 10000 -eq 0) { Write-Host ('    ...{0} sales rows' -f $i) }
-}
-$sales | Export-Csv -NoTypeInformation -Path (Join-Path $dataDir 'sales.csv')
-Write-Host ('  sales.csv       : {0,6} rows' -f $sales.Count)
-
-# ---------------------------------------------------------------
-# 6. TARGETS: monthly revenue target per region (4 x 24 months)
-# ---------------------------------------------------------------
-$targets = @()
-foreach ($region in $regions) {
-    $base = Get-Random -Minimum 400000 -Maximum 700000
-    for ($m = 0; $m -lt 24; $m++) {
-        $month = (Get-Date '2023-07-01').AddMonths($m)
-        $targets += [pscustomobject]@{
-            region         = $region
-            target_month   = $month.ToString('yyyy-MM-01')
-            revenue_target = [math]::Round($base * (1 + $m * 0.01) *
-                                 ((Get-Random -Minimum 90 -Maximum 111) / 100), 0)
-        }
-    }
-}
-$targets | Export-Csv -NoTypeInformation -Path (Join-Path $dataDir 'targets.csv')
-Write-Host ('  targets.csv     : {0,6} rows' -f $targets.Count)
-
-Write-Host 'Done. Data written to' $dataDir -ForegroundColor Green
+New-Item -ItemType Directory -Force C:\DataEngineering\sk06\data, C:\DataEngineering\sk06\scripts, C:\DataEngineering\sk06\sql, C:\DataEngineering\sk06\pbix | Out-Null
+Set-Location C:\DataEngineering\sk06
+Get-ChildItem
 ```
+
+| Folder | Holds |
+|---|---|
+| `data` | the 11 generated CSV files |
+| `scripts` | the Python generator |
+| `sql` | SQL scripts (visible in the container as `/sql`) |
+| `pbix` | your Power BI files, one per lab |
+
+**Why not Documents or Desktop?** On most company laptops those are synced by **OneDrive**. OneDrive can corrupt a `.pbix` that is being saved while it syncs, and Docker often cannot share OneDrive folders with containers. Never put the project under a path containing `OneDrive`.
+
+**Expected output:**
+
+```
+    Directory: C:\DataEngineering\sk06
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        ...                                  data
+d-----        ...                                  pbix
+d-----        ...                                  scripts
+d-----        ...                                  sql
+```
+
+✅ **Checkpoint:** your prompt shows `PS C:\DataEngineering\sk06>` and the four folders exist.
+
+### Step 5 — Install Docker Desktop
+
+If Docker Desktop already works from SK-02 or SK-03, just start it and run the three verification commands.
+
+1. Docker Desktop needs **WSL 2**. In an **admin** PowerShell run `wsl --install`, then reboot if asked.
+2. Install Docker Desktop from <https://www.docker.com/products/docker-desktop/> or with `winget install -e --id Docker.DockerDesktop` (admin PowerShell).
+3. Start **Docker Desktop** and wait for *Engine running*.
+
+```powershell
+docker --version
+docker compose version
+docker run --rm hello-world
+```
+
+**Expected output** (versions may be newer):
+
+```
+Docker version 27.x.x, build ...
+Docker Compose version v2.x.x
+...
+Hello from Docker!
+```
+
+✅ **Checkpoint:** `hello-world` prints *Hello from Docker!*
+
+### Step 6 — Write the Docker Compose file and start PostgreSQL
+
+Create `C:\DataEngineering\sk06\docker-compose.yml` (VS Code or Notepad — in Notepad choose *Save as type: All files* so it does not become `.yml.txt`):
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    container_name: sk06-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres     # local learning container only — never reuse in real systems
+      POSTGRES_DB: northstar
+    ports:
+      - "5434:5432"                   # Power BI connects to localhost:5434
+    volumes:
+      - sk06_pgdata:/var/lib/postgresql/data
+      - ./data:/data:ro               # generated CSV files
+      - ./sql:/sql:ro                 # SQL scripts
+
+volumes:
+  sk06_pgdata:
+```
+
+**What each part does:**
+
+- `POSTGRES_DB: northstar` creates the `northstar` database on first start.
+- `"5434:5432"` makes the database reachable from Windows as `localhost:5434`. Port 5434 avoids clashing with the SK-02 (5432) and SK-03 (5433) databases if those containers are still around.
+- `./data:/data:ro` and `./sql:/sql:ro` let the database server read your CSV files and scripts (`ro` = read-only).
+
+Start it:
+
+```powershell
+Set-Location C:\DataEngineering\sk06
+docker compose up -d
+docker exec sk06-postgres pg_isready -U postgres
+```
+
+The first run downloads the image (~400 MB).
+
+**Expected output** (last line):
+
+```
+/var/run/postgresql:5432 - accepting connections
+```
+
+(Inside the container the port is still 5432; only Windows sees 5434.)
+
+✅ **Checkpoint:** `pg_isready` says `accepting connections`.
+
+### Step 7 — Generate the NorthStar data with Python
+
+Check Python (3.12 recommended, 3.11+ works):
+
+```powershell
+python --version
+```
+
+The generator uses only the Python standard library, so no packages and no virtual environment are needed. Save this as `C:\DataEngineering\sk06\scripts\generate_northstar.py` — it is identical to Step 0.2 of the guided lab:
+
+```python
+"""Generate the NorthStar Retail source data for SK-06 (Power BI).
+
+Writes 11 CSV files into the folder given by --out (default: data).
+Only the Python standard library is used. The random seed is fixed, so
+every trainee gets exactly the same rows and the same lab numbers.
+"""
+import argparse
+import bisect
+import csv
+import datetime as dt
+import random
+from pathlib import Path
+
+SEED = 20260701
+FIRST_DAY = dt.date(2023, 7, 1)   # start of FY2024
+LAST_DAY = dt.date(2026, 6, 30)   # end of FY2026
+
+REGIONS = ["Northeast", "Southeast", "Midwest", "West"]
+# region -> list of (district, [(city, state, lat, lon), ...])
+GEO = {
+    "Northeast": [
+        ("New England", [("Boston", "MA", 42.36, -71.06), ("Hartford", "CT", 41.77, -72.67), ("Providence", "RI", 41.82, -71.41)]),
+        ("New York Metro", [("New York", "NY", 40.71, -74.01), ("Newark", "NJ", 40.74, -74.17), ("Albany", "NY", 42.65, -73.76)]),
+        ("Pennsylvania", [("Philadelphia", "PA", 39.95, -75.17), ("Pittsburgh", "PA", 40.44, -79.99)]),
+    ],
+    "Southeast": [
+        ("Georgia", [("Atlanta", "GA", 33.75, -84.39), ("Savannah", "GA", 32.08, -81.09)]),
+        ("Florida", [("Miami", "FL", 25.76, -80.19), ("Orlando", "FL", 28.54, -81.38), ("Tampa", "FL", 27.95, -82.46)]),
+        ("Carolinas & Tennessee", [("Charlotte", "NC", 35.23, -80.84), ("Raleigh", "NC", 35.78, -78.64), ("Nashville", "TN", 36.16, -86.78)]),
+    ],
+    "Midwest": [
+        ("Great Lakes", [("Chicago", "IL", 41.88, -87.63), ("Milwaukee", "WI", 43.04, -87.91), ("Detroit", "MI", 42.33, -83.05)]),
+        ("Ohio Valley", [("Columbus", "OH", 39.96, -83.00), ("Indianapolis", "IN", 39.77, -86.16)]),
+        ("Plains", [("Minneapolis", "MN", 44.98, -93.27), ("St. Louis", "MO", 38.63, -90.20), ("Kansas City", "MO", 39.10, -94.58)]),
+    ],
+    "West": [
+        ("Pacific Northwest", [("Seattle", "WA", 47.61, -122.33), ("Portland", "OR", 45.52, -122.68)]),
+        ("California", [("Los Angeles", "CA", 34.05, -118.24), ("San Diego", "CA", 32.72, -117.16), ("San Jose", "CA", 37.34, -121.89)]),
+        ("Mountain", [("Denver", "CO", 39.74, -104.99), ("Phoenix", "AZ", 33.45, -112.07), ("Salt Lake City", "UT", 40.76, -111.89)]),
+    ],
+}
+STORES_PER_REGION = {"Northeast": 24, "Southeast": 22, "Midwest": 21, "West": 18}  # 85 stores
+
+CATALOG = {  # category -> [(subcategory, min_price, max_price)]
+    "Apparel": [("Tops", 12, 60), ("Bottoms", 20, 90), ("Outerwear", 45, 250), ("Footwear", 30, 180)],
+    "Electronics": [("Audio", 20, 400), ("Computing", 80, 1200), ("Mobile Accessories", 8, 80), ("Smart Home", 25, 300)],
+    "Home & Garden": [("Kitchen", 10, 200), ("Furniture", 60, 900), ("Decor", 8, 120), ("Garden", 10, 250)],
+    "Grocery": [("Snacks", 2, 12), ("Beverages", 2, 25), ("Pantry", 3, 30), ("Household", 3, 40)],
+    "Sports & Outdoors": [("Fitness", 10, 400), ("Camping", 15, 350), ("Cycling", 20, 900), ("Team Sports", 8, 150)],
+}
+CATEGORY_WEIGHT = {"Apparel": 1.2, "Electronics": 0.7, "Home & Garden": 0.9, "Grocery": 2.0, "Sports & Outdoors": 0.8}
+BRANDS = ["Northwind", "Apex", "Lumen", "Harbor", "Summit", "Vista", "Crescent", "Evergreen"]
+PRODUCTS_PER_SUBCATEGORY = 600  # 5 x 4 x 600 = 12,000 SKUs
+
+FIRST_NAMES = ["Ama", "Kwame", "Efua", "Kofi", "Sarah", "James", "Linda", "David", "Grace", "Michael",
+               "Akosua", "Yaw", "Esi", "Daniel", "Rita", "Paul", "Naomi", "Victor", "Abena", "Samuel"]
+LAST_NAMES = ["Mensah", "Owusu", "Johnson", "Smith", "Boateng", "Brown", "Asante", "Williams", "Osei", "Davis",
+              "Appiah", "Miller", "Addo", "Wilson", "Agyeman", "Taylor", "Ansah", "Clark", "Frimpong", "Lewis"]
+SEGMENTS = (["Value", "Regular", "Premium"], [50, 35, 15])
+
+MONTH_FACTOR = {1: 0.85, 2: 0.85, 3: 0.95, 4: 0.95, 5: 1.0, 6: 1.0, 7: 1.0, 8: 1.05, 9: 0.95, 10: 1.0, 11: 1.25, 12: 1.45}
+WEEKDAY_FACTOR = {0: 0.92, 1: 0.92, 2: 0.92, 3: 0.95, 4: 1.05, 5: 1.30, 6: 1.15}  # Mon..Sun
+FY_GROWTH = {2024: 1.00, 2025: 1.07, 2026: 1.15}
+BASE_ORDERS_PER_DAY = 140
+
+
+def fiscal_year(d):
+    return d.year + 1 if d.month >= 7 else d.year
+
+
+def write_csv(folder, name, header, rows):
+    path = folder / name
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+    print(f"  {name:<22} {len(rows):>8,} rows")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", default="data")
+    out = Path(parser.parse_args().out)
+    out.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(SEED)
+    print(f"Generating NorthStar Retail data (seed {SEED}) into {out.resolve()}")
+
+    # ---- geography: regions, districts, stores --------------------------
+    regions = [(i + 1, r) for i, r in enumerate(REGIONS)]
+    districts, stores = [], []
+    store_weight = []
+    district_id = 0
+    store_id = 100
+    for region_id, region in regions:
+        geo = GEO[region]
+        region_districts = []
+        for district_name, cities in geo:
+            district_id += 1
+            districts.append((district_id, district_name, region_id))
+            region_districts.append((district_id, cities))
+        for n in range(STORES_PER_REGION[region]):
+            d_id, cities = region_districts[n % len(region_districts)]
+            city, state, lat, lon = cities[(n // len(region_districts)) % len(cities)]
+            store_id += 1
+            open_date = dt.date(2008, 1, 1) + dt.timedelta(days=rng.randint(0, 5000))
+            stores.append((store_id, f"NorthStar {city} #{store_id}", d_id, city, state,
+                           round(lat + rng.uniform(-0.15, 0.15), 6), round(lon + rng.uniform(-0.15, 0.15), 6),
+                           open_date.isoformat()))
+            store_weight.append(rng.uniform(0.6, 1.6))
+    store_ids = [s[0] for s in stores]
+    store_cum = list(_cumulative(store_weight))
+
+    # ---- products ----------------------------------------------------------
+    categories, subcategories, products = [], [], []
+    product_weight = []
+    product_price, product_cost = {}, {}
+    sub_id = 0
+    product_id = 10000
+    for cat_id, (cat, subs) in enumerate(CATALOG.items(), start=1):
+        categories.append((cat_id, cat))
+        for sub, lo, hi in subs:
+            sub_id += 1
+            subcategories.append((sub_id, sub, cat_id))
+            for _ in range(PRODUCTS_PER_SUBCATEGORY):
+                product_id += 1
+                brand = rng.choice(BRANDS)
+                price = round(rng.uniform(lo, hi), 2)
+                cost = round(price * rng.uniform(0.55, 0.72), 2)
+                products.append((product_id, f"{brand} {sub} {product_id}", sub_id, brand,
+                                 f"{cost:.2f}", f"{price:.2f}"))
+                product_price[product_id] = price
+                product_cost[product_id] = cost
+                # long-tail popularity: a few products sell a lot (Pareto)
+                popularity = 1.0 / (rng.randint(1, PRODUCTS_PER_SUBCATEGORY) ** 0.9)
+                product_weight.append(popularity * CATEGORY_WEIGHT[cat] / (price ** 0.35))
+    product_ids = [p[0] for p in products]
+    product_cum = list(_cumulative(product_weight))
+
+    # ---- customers ---------------------------------------------------------
+    customers = []
+    n_customers = 30000
+    span_before = (FIRST_DAY - dt.date(2019, 1, 1)).days
+    span_during = (LAST_DAY - FIRST_DAY).days
+    reg_dates = []
+    for _ in range(n_customers):
+        if rng.random() < 0.40:
+            reg = dt.date(2019, 1, 1) + dt.timedelta(days=rng.randint(0, span_before - 1))
+        else:
+            reg = FIRST_DAY + dt.timedelta(days=rng.randint(0, span_during))
+        reg_dates.append(reg)
+    reg_dates.sort()
+    for i, reg in enumerate(reg_dates, start=1):
+        first, last = rng.choice(FIRST_NAMES), rng.choice(LAST_NAMES)
+        city, state = rng.choice([(c[0], c[1]) for g in GEO.values() for _, cs in g for c in cs])
+        segment = rng.choices(*SEGMENTS)[0]
+        customers.append((i, first, last, f"customer{i}@example.com", segment, reg.isoformat(), city, state))
+    customer_by_reg_day = {}
+    for c in customers:
+        customer_by_reg_day.setdefault(c[5], []).append(c[0])
+
+    # ---- promotions ----------------------------------------------------------
+    promotions = [(0, "No Promotion", "None", "0.00", FIRST_DAY.isoformat(), LAST_DAY.isoformat())]
+    promo_templates = [("Back to School", "Seasonal", 8, 10), ("Black Friday", "Holiday", 11, 24),
+                       ("Holiday Gift Event", "Holiday", 12, 10), ("New Year Clearance", "Clearance", 1, 3),
+                       ("Spring Refresh", "Seasonal", 3, 15), ("Summer Loyalty Days", "Loyalty", 6, 5)]
+    promo_days = {}
+    pid = 0
+    for fy in (2024, 2025, 2026):
+        for name, ptype, month, day in promo_templates:
+            pid += 1
+            year = fy - 1 if month >= 7 else fy
+            start = dt.date(year, month, day)
+            end = start + dt.timedelta(days=rng.randint(6, 16))
+            pct = rng.choice([0.10, 0.15, 0.20, 0.25])
+            promotions.append((pid, f"{name} {year}", ptype, f"{pct:.2f}", start.isoformat(), end.isoformat()))
+            d = start
+            while d <= end:
+                promo_days[d] = (pid, pct)
+                d += dt.timedelta(days=1)
+
+    # ---- orders and order lines ------------------------------------------------
+    orders, lines = [], []
+    order_id = 1000000
+    line_id = 0
+    store_month_revenue = {}
+    day = FIRST_DAY
+    total_days = (LAST_DAY - FIRST_DAY).days
+    while day <= LAST_DAY:
+        fy = fiscal_year(day)
+        trend = 1 + 0.03 * ((day - FIRST_DAY).days / total_days)
+        expected = BASE_ORDERS_PER_DAY * MONTH_FACTOR[day.month] * WEEKDAY_FACTOR[day.weekday()] * FY_GROWTH[fy] * trend
+        n_orders = max(1, int(round(rng.gauss(expected, expected ** 0.5))))
+        bound = bisect.bisect_right(reg_dates, day)  # customers registered on/before this day
+        new_today = customer_by_reg_day.get(day.isoformat(), [])
+        promo = promo_days.get(day)
+        for k in range(n_orders):
+            order_id += 1
+            # every customer who registers today places their first order today
+            customer_id = new_today[k] if k < len(new_today) else rng.randint(1, bound)
+            r = rng.random()
+            ship_date = "" if r < 0.01 else (day + dt.timedelta(days=rng.choices([1, 2, 3, 4, 5, 6, 7], [10, 25, 25, 15, 10, 8, 7])[0])).isoformat()
+            is_returned = 1 if rng.random() < 0.04 else 0
+            orders.append((order_id, day.isoformat(), ship_date, customer_id, is_returned, "pos_loader", "POS"))
+            store = store_ids[bisect.bisect_left(store_cum, rng.random() * store_cum[-1])]
+            n_lines = rng.choices([1, 2, 3, 4], [50, 30, 15, 5])[0]
+            for line_number in range(1, n_lines + 1):
+                line_id += 1
+                prod = product_ids[bisect.bisect_left(product_cum, rng.random() * product_cum[-1])]
+                qty = rng.choices([1, 2, 3, 4], [60, 25, 10, 5])[0]
+                price = product_price[prod]
+                promo_id, discount = 0, 0.0
+                if promo and rng.random() < 0.35:
+                    promo_id = promo[0]
+                    discount = round(qty * price * promo[1], 2)
+                lines.append((line_id, order_id, line_number, prod, store, promo_id, qty, f"{price:.2f}", f"{discount:.2f}"))
+                key = (store, day.replace(day=1))
+                store_month_revenue[key] = store_month_revenue.get(key, 0.0) + qty * price - discount
+        day += dt.timedelta(days=1)
+
+    # ---- monthly revenue targets per store ---------------------------------------
+    # targets were set ambitiously for some regions, so the RAG status varies
+    region_of_store = {s[0]: REGIONS[districts[s[2] - 1][2] - 1] for s in stores}
+    ambition = {"Northeast": 0.97, "Southeast": 1.03, "Midwest": 1.07, "West": 1.14}
+    targets = []
+    for (store, month), revenue in sorted(store_month_revenue.items()):
+        factor = ambition[region_of_store[store]] * rng.uniform(0.95, 1.05)
+        target = round(revenue * factor, -2)
+        targets.append((store, month.isoformat(), f"{target:.2f}"))
+
+    # ---- write files ---------------------------------------------------------------
+    write_csv(out, "regions.csv", ["region_id", "region_name"], regions)
+    write_csv(out, "districts.csv", ["district_id", "district_name", "region_id"], districts)
+    write_csv(out, "stores.csv", ["store_id", "store_name", "district_id", "city", "state", "latitude", "longitude", "open_date"], stores)
+    write_csv(out, "categories.csv", ["category_id", "category_name"], categories)
+    write_csv(out, "subcategories.csv", ["subcategory_id", "subcategory_name", "category_id"], subcategories)
+    write_csv(out, "products.csv", ["product_id", "product_name", "subcategory_id", "brand", "unit_cost", "list_price"], products)
+    write_csv(out, "customers.csv", ["customer_id", "first_name", "last_name", "email", "customer_segment", "registration_date", "city", "state"], customers)
+    write_csv(out, "promotions.csv", ["promotion_id", "promotion_name", "promotion_type", "discount_pct", "start_date", "end_date"], promotions)
+    write_csv(out, "orders.csv", ["order_id", "order_date", "ship_date", "customer_id", "is_returned", "created_by", "source_system"], orders)
+    write_csv(out, "order_lines.csv", ["order_line_id", "order_id", "line_number", "product_id", "store_id", "promotion_id", "quantity", "unit_price", "discount_amount"], lines)
+    write_csv(out, "revenue_targets.csv", ["store_id", "target_month", "revenue_target"], targets)
+    print("Done.")
+
+
+def _cumulative(weights):
+    total = 0.0
+    for w in weights:
+        total += w
+        yield total
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**How the script works (skim it once):**
+
+- `random.Random(SEED)` — every random choice comes from one generator with a fixed seed, so your rows are identical to everyone else's and to the numbers in these labs. **Do not change the seed.**
+- **Geography:** 4 regions → 12 districts → 85 stores (ids 101–185; Northeast 101–124, Southeast 125–146, Midwest 147–167, West 168–185).
+- **Products:** 5 categories × 4 subcategories × 600 = 12,000 SKUs, with a "long tail" — a few products sell a lot (you will measure the 80/20 rule in Lab 05).
+- **Orders:** three full fiscal years, FY2024–FY2026 (1 July 2023 – 30 June 2026), with weekend and November/December peaks and ~7–10% yearly growth. About 1% of orders never ship (`ship_date` empty) and ~4% are returned.
+- **Targets:** one revenue target per store per month, set more ambitiously in some regions so the target traffic lights in Lab 05 show green, amber and red.
+- `orders.csv` also contains two columns the business does not need for reporting (`created_by`, `source_system`) — real sources always do. You will leave them behind in Lab 02.
+
+Run it from the project folder:
+
+```powershell
+Set-Location C:\DataEngineering\sk06
+python scripts\generate_northstar.py --out data
+```
+
+**Expected output** (about 15 seconds):
+
+```
+Generating NorthStar Retail data (seed 20260701) into C:\DataEngineering\sk06\data
+  regions.csv                   4 rows
+  districts.csv                12 rows
+  stores.csv                   85 rows
+  categories.csv                5 rows
+  subcategories.csv            20 rows
+  products.csv             12,000 rows
+  customers.csv            30,000 rows
+  promotions.csv               19 rows
+  orders.csv              177,070 rows
+  order_lines.csv         310,024 rows
+  revenue_targets.csv       3,060 rows
+Done.
+```
+
+Peek at the two biggest files:
+
+```powershell
+Get-Content data\orders.csv -TotalCount 3
+Get-Content data\order_lines.csv -TotalCount 3
+```
+
+**Expected output:**
+
+```
+order_id,order_date,ship_date,customer_id,is_returned,created_by,source_system
+1000001,2023-07-01,2023-07-03,12000,0,pos_loader,POS
+1000002,2023-07-01,2023-07-03,12001,0,pos_loader,POS
+order_line_id,order_id,line_number,product_id,store_id,promotion_id,quantity,unit_price,discount_amount
+1,1000001,1,18707,171,0,2,28.22,0.00
+2,1000002,1,18982,103,0,1,23.99,0.00
+```
+
+Notice there is **no revenue column** and **no region name** on a sales row — only ids. That is normal for an OLTP database, and it is why Lab 02 reshapes the data.
+
+✅ **Checkpoint:** 11 CSV files in `C:\DataEngineering\sk06\data` and the row counts above match exactly.
+
+### Step 8 — Create and load the source database
+
+Save this as `C:\DataEngineering\sk06\sql\01_create_and_load_northstar.sql` (identical to Step 0.3 of the guided lab):
+
+```sql
+-- NorthStar Retail source database (OLTP-style) for SK-06
+-- Run inside the container:  psql -U postgres -d northstar -f /sql/01_create_and_load_northstar.sql
+-- Safe to re-run: it drops and recreates the three schemas.
+\set ON_ERROR_STOP on
+
+DROP SCHEMA IF EXISTS sales CASCADE;
+DROP SCHEMA IF EXISTS products CASCADE;
+DROP SCHEMA IF EXISTS finance CASCADE;
+CREATE SCHEMA sales;
+CREATE SCHEMA products;
+CREATE SCHEMA finance;
+
+-- ---------- geography ----------
+CREATE TABLE sales.regions (
+    region_id    INT PRIMARY KEY,
+    region_name  TEXT NOT NULL UNIQUE
+);
+CREATE TABLE sales.districts (
+    district_id    INT PRIMARY KEY,
+    district_name  TEXT NOT NULL,
+    region_id      INT NOT NULL REFERENCES sales.regions(region_id)
+);
+CREATE TABLE sales.stores (
+    store_id     INT PRIMARY KEY,
+    store_name   TEXT NOT NULL,
+    district_id  INT NOT NULL REFERENCES sales.districts(district_id),
+    city         TEXT NOT NULL,
+    state        CHAR(2) NOT NULL,
+    latitude     NUMERIC(9,6),
+    longitude    NUMERIC(9,6),
+    open_date    DATE
+);
+
+-- ---------- product hierarchy ----------
+CREATE TABLE products.categories (
+    category_id    INT PRIMARY KEY,
+    category_name  TEXT NOT NULL UNIQUE
+);
+CREATE TABLE products.subcategories (
+    subcategory_id    INT PRIMARY KEY,
+    subcategory_name  TEXT NOT NULL,
+    category_id       INT NOT NULL REFERENCES products.categories(category_id)
+);
+CREATE TABLE products.products (
+    product_id      INT PRIMARY KEY,
+    product_name    TEXT NOT NULL,
+    subcategory_id  INT NOT NULL REFERENCES products.subcategories(subcategory_id),
+    brand           TEXT NOT NULL,
+    unit_cost       NUMERIC(10,2) NOT NULL,
+    list_price      NUMERIC(10,2) NOT NULL
+);
+
+-- ---------- customers and promotions ----------
+CREATE TABLE sales.customers (
+    customer_id        INT PRIMARY KEY,
+    first_name         TEXT NOT NULL,
+    last_name          TEXT NOT NULL,
+    email              TEXT NOT NULL,
+    customer_segment   TEXT NOT NULL,
+    registration_date  DATE NOT NULL,
+    city               TEXT,
+    state              CHAR(2)
+);
+CREATE TABLE sales.promotions (
+    promotion_id    INT PRIMARY KEY,
+    promotion_name  TEXT NOT NULL,
+    promotion_type  TEXT NOT NULL,
+    discount_pct    NUMERIC(4,2) NOT NULL,
+    start_date      DATE NOT NULL,
+    end_date        DATE NOT NULL
+);
+
+-- ---------- transactions ----------
+CREATE TABLE sales.orders (
+    order_id       BIGINT PRIMARY KEY,
+    order_date     DATE NOT NULL,
+    ship_date      DATE,                 -- NULL = not shipped (cancelled)
+    customer_id    INT NOT NULL REFERENCES sales.customers(customer_id),
+    is_returned    SMALLINT NOT NULL,    -- 1 = order was returned
+    created_by     TEXT,                 -- audit column (not needed for BI)
+    source_system  TEXT                  -- pipeline column (not needed for BI)
+);
+CREATE TABLE sales.order_lines (
+    order_line_id    BIGINT PRIMARY KEY,
+    order_id         BIGINT NOT NULL REFERENCES sales.orders(order_id),
+    line_number      INT NOT NULL,
+    product_id       INT NOT NULL REFERENCES products.products(product_id),
+    store_id         INT NOT NULL REFERENCES sales.stores(store_id),
+    promotion_id     INT NOT NULL REFERENCES sales.promotions(promotion_id),
+    quantity         INT NOT NULL,
+    unit_price       NUMERIC(10,2) NOT NULL,
+    discount_amount  NUMERIC(10,2) NOT NULL
+);
+
+-- ---------- monthly targets (one row per store per month) ----------
+CREATE TABLE finance.revenue_targets (
+    store_id        INT NOT NULL REFERENCES sales.stores(store_id),
+    target_month    DATE NOT NULL,       -- always the 1st of the month
+    revenue_target  NUMERIC(12,2) NOT NULL,
+    PRIMARY KEY (store_id, target_month)
+);
+
+-- ---------- load the CSV files (mounted at /data in the container) ----------
+COPY sales.regions            FROM '/data/regions.csv'         WITH (FORMAT csv, HEADER true);
+COPY sales.districts          FROM '/data/districts.csv'       WITH (FORMAT csv, HEADER true);
+COPY sales.stores             FROM '/data/stores.csv'          WITH (FORMAT csv, HEADER true);
+COPY products.categories      FROM '/data/categories.csv'      WITH (FORMAT csv, HEADER true);
+COPY products.subcategories   FROM '/data/subcategories.csv'   WITH (FORMAT csv, HEADER true);
+COPY products.products        FROM '/data/products.csv'        WITH (FORMAT csv, HEADER true);
+COPY sales.customers          FROM '/data/customers.csv'       WITH (FORMAT csv, HEADER true);
+COPY sales.promotions         FROM '/data/promotions.csv'      WITH (FORMAT csv, HEADER true);
+COPY sales.orders             FROM '/data/orders.csv'          WITH (FORMAT csv, HEADER true);
+COPY sales.order_lines        FROM '/data/order_lines.csv'     WITH (FORMAT csv, HEADER true);
+COPY finance.revenue_targets  FROM '/data/revenue_targets.csv' WITH (FORMAT csv, HEADER true);
+
+CREATE INDEX ix_order_lines_order ON sales.order_lines(order_id);
+CREATE INDEX ix_orders_order_date ON sales.orders(order_date);
+ANALYZE;
+
+-- ---------- row-count check ----------
+SELECT 'sales.regions' AS table_name, COUNT(*) AS row_count FROM sales.regions
+UNION ALL SELECT 'sales.districts',          COUNT(*) FROM sales.districts
+UNION ALL SELECT 'sales.stores',             COUNT(*) FROM sales.stores
+UNION ALL SELECT 'products.categories',      COUNT(*) FROM products.categories
+UNION ALL SELECT 'products.subcategories',   COUNT(*) FROM products.subcategories
+UNION ALL SELECT 'products.products',        COUNT(*) FROM products.products
+UNION ALL SELECT 'sales.customers',          COUNT(*) FROM sales.customers
+UNION ALL SELECT 'sales.promotions',         COUNT(*) FROM sales.promotions
+UNION ALL SELECT 'sales.orders',             COUNT(*) FROM sales.orders
+UNION ALL SELECT 'sales.order_lines',        COUNT(*) FROM sales.order_lines
+UNION ALL SELECT 'finance.revenue_targets',  COUNT(*) FROM finance.revenue_targets;
+```
+
+**What it does:** three **schemas** (named folders inside the database: `sales`, `products`, `finance`) and 11 tables with primary and foreign keys — a typical normalised OLTP design. `COPY ... FROM '/data/...'` is run by the database server itself, which reads the CSVs through the `./data:/data` mount. In CSV format an empty field is loaded as `NULL`, so unshipped orders get a `NULL` ship date.
 
 Run it:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass   # this session only
-& 'C:\PowerBI_Labs\NorthStar\scripts\Generate-NorthStarData.ps1'
+docker exec sk06-postgres psql -U postgres -d northstar -f /sql/01_create_and_load_northstar.sql
 ```
 
-**Why:** Real projects never hand you clean CSVs; generating your own (with a seed, with known defects) gives you a controlled, reproducible sandbox — and PowerShell practice on the platform you'll administer Power BI on.
+**Expected output** (the first run prints NOTICEs that the schemas do not exist yet — that is fine; the end of the output is):
 
-**Expected output:** Progress lines, then six row counts: stores 85, products 500, customers 2000, promotions 12, sales 50000, targets 96, ending with `Done.` The sales generation takes a minute or two.
-
-**How to verify:** Next step is a dedicated verification. Quick sanity check now:
-
-```powershell
-Get-ChildItem C:\PowerBI_Labs\NorthStar\data | Select-Object Name, Length
+```
+       table_name        | row_count
+-------------------------+-----------
+ sales.regions           |         4
+ sales.districts         |        12
+ sales.stores            |        85
+ products.categories     |         5
+ products.subcategories  |        20
+ products.products       |     12000
+ sales.customers         |     30000
+ sales.promotions        |        19
+ sales.orders            |    177070
+ sales.order_lines       |    310024
+ finance.revenue_targets |      3060
+(11 rows)
 ```
 
-All six files present; `sales.csv` should be roughly 4–6 MB.
+✅ **Checkpoint:** all 11 row counts match. The script is safe to re-run — it drops and recreates the schemas.
 
-**Common mistakes:**
-- Changing the seed (`4242`) — your checkpoints will never match the labs.
-- Running in **PowerShell 7 vs Windows PowerShell 5.1**: both work, but `Get-Random` sequences differ between versions, so your exact rows may differ from a colleague's. Either is fine for the labs — totals are checked with tolerances, and structure is what matters.
-- Saving the script with a `.txt` extension from Notepad ("Generate-NorthStarData.ps1.txt"). In the Save dialog choose *All files*.
+### Step 9 — Record the control totals
 
-**Troubleshooting:**
-
-| Problem | Fix |
-|---|---|
-| `...cannot be loaded because running scripts is disabled` | You skipped the `Set-ExecutionPolicy -Scope Process ...` line; run it first (affects only the current window) |
-| Script runs but folder empty | You probably edited `$dataDir`; restore the exact path |
-| Takes forever (>10 min) | Antivirus scanning each write; exclude `C:\PowerBI_Labs` temporarily, or just wait |
-| `Export-Csv : Access to the path ... denied` | A CSV is open in Excel — close Excel and rerun |
-
----
-
-### Step 7 — Inspect the data (meet your defects)
-
-**What:** Peek at the files so Lab_02's problems aren't a surprise:
+A **control total** is a number computed *outside* Power BI that your report must reproduce. Open psql:
 
 ```powershell
-# First 5 sales rows
-Import-Csv C:\PowerBI_Labs\NorthStar\data\sales.csv | Select-Object -First 5 | Format-Table
-
-# Count the deliberate defects
-$s = Import-Csv C:\PowerBI_Labs\NorthStar\data\sales.csv
-'Null customer_ids : ' + ($s | Where-Object { -not $_.customer_id }).Count
-'Negative qty rows : ' + ($s | Where-Object { [int]$_.quantity -lt 0 }).Count
-
-# Region casing chaos in stores.csv
-Import-Csv C:\PowerBI_Labs\NorthStar\data\stores.csv |
-    Group-Object region | Sort-Object Name | Select-Object Name, Count
+docker exec -it sk06-postgres psql -U postgres -d northstar
 ```
 
-**Why:** Data profiling *before* loading into any tool is a professional reflex. You should never be surprised by your own data.
+At the `northstar=#` prompt run (the semicolon matters):
 
-**Expected output:** ~1,000 null customer_ids (≈2%), ~500 negative-quantity rows (≈1%), and the region grouping showing ugly variants like `EAST`, `east`, `East` as *separate groups* — that's the Lab_02 cleaning list, previewed.
+```sql
+SELECT
+    CASE WHEN EXTRACT(MONTH FROM o.order_date) >= 7
+         THEN EXTRACT(YEAR FROM o.order_date) + 1
+         ELSE EXTRACT(YEAR FROM o.order_date) END                     AS fiscal_year,
+    ROUND(SUM(ol.quantity * ol.unit_price - ol.discount_amount), 2)   AS net_revenue,
+    COUNT(DISTINCT o.order_id)                                         AS orders
+FROM sales.orders o
+JOIN sales.order_lines ol ON ol.order_id = o.order_id
+GROUP BY 1
+ORDER BY 1;
+```
 
-**Verify:** Counts are in those ballparks (exact values depend on PowerShell version — see Step 6 note).
+**Expected output:**
 
-**Common mistakes:** Panicking at the "bad" data. It's supposed to be there. **Do not fix the CSVs** — Lab_02 fixes them *inside Power Query*, which is the whole lesson (transformations should live in the tool, repeatably, not as one-off file edits).
+```
+ fiscal_year | net_revenue | orders
+-------------+-------------+--------
+        2024 |  9958772.62 |  54446
+        2025 | 10783033.72 |  58745
+        2026 | 11862350.26 |  63879
+(3 rows)
+```
 
-**Troubleshooting:** `Import-Csv` on 50k rows takes ~10–20 seconds; that's normal.
+The `CASE` puts July–December into the *next* fiscal year — NorthStar names a fiscal year after the year it ends in. **Net revenue** = quantity × unit price − discount, the CFO's definition. Copy these three lines into a notes file; Labs 04 and 05 check your measures against them. Quit with `\q`.
 
----
+✅ **Checkpoint:** FY2026 net revenue is **11,862,350.26** with **63,879** orders.
 
-### Step 8 — Final verification checkpoint
+### Step 10 — Connect Power BI Desktop to PostgreSQL (smoke test)
 
-**What:** Run this consolidated check and keep the output:
+1. In Power BI Desktop: **Home → Get data → More… → Database → PostgreSQL database → Connect**.
+2. **Server:** `localhost:5434` **Database:** `northstar` · Data Connectivity mode **Import** → **OK**.
+3. Credentials: choose the **Database** tab (not Windows), user `postgres`, password `postgres` → **Connect**.
+4. If a dialog says it cannot connect using an encrypted connection, click **OK** to connect without encryption. The local container has no TLS certificate; a production server would have one.
+5. In the Navigator, expand `northstar` and tick `sales.regions` → **Load**.
+
+**Expected output:** the Data pane shows `sales regions` (Power BI turns the dot into a space); Table view shows 4 rows: Northeast, Southeast, Midwest, West.
+
+Close Power BI **without saving** — this was only a connection test. Lab 01 starts the first real file.
+
+✅ **Checkpoint:** Power BI shows the 4 regions from your container.
+
+### Step 11 — Final verification
 
 ```powershell
+Set-Location C:\DataEngineering\sk06
 $checks = [ordered]@{
-    'Power BI Desktop installed' = [bool](Get-StartApps | Where-Object Name -like '*Power BI Desktop*')
-    'Folder structure exists'    = (Test-Path 'C:\PowerBI_Labs\NorthStar\data') -and
-                                   (Test-Path 'C:\PowerBI_Labs\NorthStar\pbix')
-    'stores.csv (85 rows)'       = (Import-Csv C:\PowerBI_Labs\NorthStar\data\stores.csv).Count -eq 85
-    'products.csv (500 rows)'    = (Import-Csv C:\PowerBI_Labs\NorthStar\data\products.csv).Count -eq 500
-    'customers.csv (2000 rows)'  = (Import-Csv C:\PowerBI_Labs\NorthStar\data\customers.csv).Count -eq 2000
-    'promotions.csv (12 rows)'   = (Import-Csv C:\PowerBI_Labs\NorthStar\data\promotions.csv).Count -eq 12
-    'sales.csv (50000 rows)'     = (Import-Csv C:\PowerBI_Labs\NorthStar\data\sales.csv).Count -eq 50000
-    'targets.csv (96 rows)'      = (Import-Csv C:\PowerBI_Labs\NorthStar\data\targets.csv).Count -eq 96
+    'Power BI Desktop installed'      = [bool](Get-StartApps | Where-Object Name -like '*Power BI Desktop*')
+    'Project folders exist'           = (Test-Path .\data) -and (Test-Path .\scripts) -and (Test-Path .\sql) -and (Test-Path .\pbix)
+    '11 CSV files generated'          = ((Get-ChildItem .\data\*.csv).Count -eq 11)
+    'Container sk06-postgres running' = ((docker inspect -f '{{.State.Running}}' sk06-postgres) -eq 'true')
+    'order_lines loaded (310024)'     = ((docker exec sk06-postgres psql -U postgres -d northstar -tAc "SELECT COUNT(*) FROM sales.order_lines") -eq '310024')
 }
-$checks.GetEnumerator() | ForEach-Object {
-    '{0} : {1}' -f ($_.Value ? 'PASS' : 'FAIL'), $_.Key
+foreach ($c in $checks.GetEnumerator()) {
+    if ($c.Value) { "PASS : $($c.Key)" } else { "FAIL : $($c.Key)" }
 }
 ```
 
-(The `? :` ternary needs PowerShell 7; on Windows PowerShell 5.1 replace the last block with `$checks.GetEnumerator() | ForEach-Object { if ($_.Value) {"PASS : $($_.Key)"} else {"FAIL : $($_.Key)"} }`.)
+**Expected output:**
 
-Also confirm manually, inside Power BI Desktop: **Options > Global > Data Load > Auto date/time is unchecked**, and note your version from **Help > About**.
+```
+PASS : Power BI Desktop installed
+PASS : Project folders exist
+PASS : 11 CSV files generated
+PASS : Container sk06-postgres running
+PASS : order_lines loaded (310024)
+```
 
-**Why:** Every later lab assumes exactly this state. A five-minute checkpoint now saves an hour of confusion in Lab_02.
+Also confirm by hand: **Options → GLOBAL → Data Load → Auto date/time** is unchecked.
 
-**Expected output:** Eight `PASS` lines.
+✅ **Checkpoint:** five PASS lines plus Auto date/time off. (The first check can wrongly FAIL for the `.exe` install on some machines — if Power BI starts, count it as PASS.)
 
-**Verify:** All PASS + the two manual confirmations.
+## Troubleshooting
 
-**Common mistakes:** Ignoring one FAIL "because it's probably fine." It isn't. Rerun the relevant step.
+| Symptom | Cause | Fix |
+|---|---|---|
+| Store **Get** button greyed out | Microsoft Store blocked by IT | Use Option B (direct download) or ask IT to deploy Power BI Desktop. |
+| Power BI starts and closes immediately, or the canvas is blank | Graphics driver / VM without 3D acceleration | Update the GPU driver; in a VM enable 3D acceleration; or Options → GLOBAL → Diagnostics/Report settings → use software rendering, then restart. |
+| WebView2 error on install | Edge WebView2 runtime missing | Install "Microsoft Edge WebView2 Runtime", then reinstall Power BI Desktop. |
+| `docker: error during connect` | Docker Desktop not running | Start Docker Desktop, wait for *Engine running*. |
+| `Bind for 0.0.0.0:5434 failed: port is already allocated` | Something else uses 5434 | `docker ps` to find it, or change the mapping to `"5435:5432"` and use `localhost:5435` in Power BI. |
+| `python` opens the Microsoft Store or is not found | Python not installed / Store alias | Install Python 3.12 from python.org (tick *Add python.exe to PATH*) or `winget install -e --id Python.Python.3.12`, then open a new PowerShell. |
+| Row counts differ from the lab | Script edited, seed changed, or saved from a partial copy | Re-save the script exactly, rerun Step 7, then rerun Step 8. |
+| `could not open file "/data/regions.csv"` | Container started before the files existed, or project under OneDrive | Check `Get-ChildItem C:\DataEngineering\sk06\data`; then `docker compose down` and `docker compose up -d` from `C:\DataEngineering\sk06`. |
+| `/sql/01_create_and_load_northstar.sql: No such file or directory` | File saved elsewhere or as `.sql.txt` | `Get-ChildItem C:\DataEngineering\sk06\sql` and fix the name. |
+| Power BI: *password authentication failed* | Wrong credential type or password | Data source settings → `localhost:5434;northstar` → Edit Permissions → Edit → **Database** tab, `postgres` / `postgres`. |
+| Power BI: *An error happened while reading data from the provider* / *Npgsql* message | Very old Power BI Desktop | Update Power BI Desktop (current versions include the PostgreSQL driver). |
+| Power BI cannot reach `localhost:5434` | Container stopped | `docker compose start` from `C:\DataEngineering\sk06`, then refresh. |
 
-**Troubleshooting:** The Start-apps check can false-FAIL for the .exe install on some machines even when the app runs fine — if Power BI launches, count it as PASS.
+## Teardown
 
----
+Between labs, stop the database to free memory (data is kept):
 
-**Lab_00 complete.** You have a configured tool and a realistic (deliberately imperfect) dataset. In [Lab_01_Power_BI_and_BI_Concepts.md](Lab_01_Power_BI_and_BI_Concepts.md) you'll load this data and build your first visual — and discover exactly why raw flat files aren't enough.
+```powershell
+Set-Location C:\DataEngineering\sk06
+docker compose stop      # stop, keep data
+docker compose start     # start again before the next lab
+```
 
----
+To start completely clean (deletes the database; rerun Step 8 afterwards):
 
-## 5. Production Engineering Practices
+```powershell
+docker compose down -v
+docker compose up -d
+```
 
-Setup habits are engineering habits. Five practices to adopt from day zero — each with a real-world failure story of the kind that makes these rules exist.
+## Key takeaways
 
-### 5.1 Standardize environments across the team
+- Power BI Desktop = Power Query (prepare) + VertiPaq model (store) + DAX (calculate) + report canvas (show), all in one `.pbix`. The Service is where it is shared — Lab 06.
+- **Auto date/time is off** — NorthStar's fiscal year starts 1 July and one explicit `dim_date` will serve every fact.
+- The source is a normalised OLTP database: PostgreSQL 16 in container `sk06-postgres`, database `northstar`, Windows port **5434**, user/password `postgres`/`postgres`.
+- The data is seeded: everyone has the same 310,024 order lines, and FY2026 net revenue is **11,862,350.26**. Control totals computed in SQL are your answer key for every later lab.
+- Keep the project in `C:\DataEngineering\sk06`, never in OneDrive.
 
-**What:** Document tool + version + settings (exactly what this lab is). Teams often keep a one-page "workstation setup" doc or a setup script in the repo.
+**Interview check:** *Why seed a data generator?* — Determinism: the same seed gives the same data on every run and every machine, so expected values stay valid and you can tell "my logic changed" from "the data changed". *Desktop vs Service?* — Desktop is the free Windows authoring tool; the Service is the cloud platform for publishing, refresh, sharing and security.
 
-**Why:** Power BI updates monthly; features and even DAX behavior details evolve. Mixed versions = "works on my machine" for BI.
+## Next
 
-**Failure story:** A consultancy delivered a .pbix built on the latest Desktop to a client whose IT had frozen Desktop at a 10-month-old version. The file wouldn't open at all — newer format. The team spent two days rebuilding features in the old version. A one-line "confirm client's Power BI version" checklist item would have prevented the entire incident.
-
-### 5.2 Disable Auto date/time as team policy, not personal preference
-
-**What:** The Step-4 setting, written into the team's standards doc.
-
-**Why:** One developer with it enabled produces models that behave and size differently from everyone else's.
-
-**Failure story:** A retail client's flagship model was 1.4 GB and refreshing at the edge of its capacity limits. An audit found 38 hidden auto date tables (the model had 19 datetime columns across many tables). Disabling the feature and pointing everything at one `dim_date` cut the file to under 600 MB overnight. Nobody had ever *chosen* those tables — they were a default nobody questioned.
-
-### 5.3 Keep data, files, and scripts in predictable, non-synced paths
-
-**What:** `C:\PowerBI_Labs\...` here; in production, agreed network/SharePoint conventions with .pbix files *edited locally* and never live-edited from a synced folder.
-
-**Why:** OneDrive/Dropbox syncing a .pbix mid-save corrupts files; wandering data paths break refresh.
-
-**Failure story:** An analyst kept the department's only copy of a critical .pbix in a OneDrive folder. A sync conflict during save produced a 0-byte file and a conflict copy that wouldn't open. Three weeks of work — measures, bookmarks, formatting — gone. (Versioned copies, next item, is the other half of the fix.)
-
-### 5.4 Version everything — even "just a setup script"
-
-**What:** The generator script belongs in version control (you learned git in SK-01). .pbix files are binary and diff poorly, so teams version them by disciplined file naming (`NorthStar_Lab01.pbix`, `NorthStar_Lab02.pbix`, dates or v-numbers in real projects) plus git for any extractable text (scripts, later: model metadata via Tabular Editor).
-
-**Why:** "Which version of the generator produced this data?" must always be answerable, or your tests are built on sand.
-
-**Failure story:** A team's synthetic test data script lived only on one engineer's laptop. He tweaked distributions casually for months; when he left, nobody could reproduce the test dataset the regression suite's expected values were based on, and 40+ "failing" tests had to be re-baselined by hand.
-
-### 5.5 Seed your randomness; document your intentional defects
-
-**What:** `Get-Random -SetSeed 4242`, and a header comment listing the injected data-quality issues.
-
-**Why:** Reproducibility is the difference between *engineering* and *vibes*. And undocumented fake defects have a way of being mistaken for real ones.
-
-**Failure story:** A QA team injected fake nulls into a staging dataset to test error handling — and didn't document it. Six months later a different team "discovered" the nulls, filed a data-quality incident against the upstream pipeline team, and two teams burned a week investigating a defect that was installed on purpose. The fix was a comment block.
-
----
-
-## 6. Reflection
-
-### What you learned
-
-- How to install Power BI Desktop (Store vs direct download) and why monthly updates are the norm
-- Where to check your version (**Help > About**) and why version awareness matters
-- Why **Auto date/time** is disabled by professionals (bloat + wrong calendar for fiscal-year businesses like NorthStar)
-- A clean, non-synced folder convention for BI work
-- How to generate seeded, realistic synthetic data in PowerShell — including *deliberate* defects for later cleaning
-- Basic data profiling in PowerShell before ever opening a BI tool
-
-### Interview questions (with model answers)
-
-**Q1. Power BI Desktop vs the Power BI Service — what's the difference?**
-*Model answer:* Desktop is the free Windows authoring tool where you build queries, the data model, and reports, saved as .pbix. The Service is the cloud platform (app.powerbi.com) where reports are published, shared, refreshed on schedule, and secured for consumers. Authoring happens in Desktop; distribution and collaboration happen in the Service. (Lab_01 covers the full ecosystem.)
-
-**Q2. What is Auto date/time and why would you disable it?**
-*Model answer:* A default that creates a hidden calendar-based date table for every date column to enable drag-and-drop date hierarchies. I disable it because it bloats the model (often dramatically with many date columns), uses a Jan–Dec calendar that's wrong for fiscal-year businesses, and is redundant once you build a proper shared date dimension — which you need anyway for time intelligence.
-
-**Q3. Why do professionals build one explicit date table instead of relying on hierarchies per date column?**
-*Model answer:* A single marked date dimension gives one consistent calendar (including fiscal logic), lets all fact tables share the same date filters, enables DAX time-intelligence functions, and keeps model size down. Per-column hidden tables give none of that consistency.
-
-**Q4. How would you create realistic test data when you can't use production data?**
-*Model answer:* Generate synthetic data with a script: realistic distributions, referential integrity between dimension and fact keys, a fixed random seed for reproducibility, and deliberately injected quality issues to exercise cleaning logic — all documented and version-controlled. Production data is often off-limits for privacy/compliance reasons, so this is a standard practice.
-
-**Q5. What's inside a .pbix file, at a high level?**
-*Model answer:* It's a zip-like container holding the Power Query definitions (M code), the data model metadata (tables, relationships, DAX measures), the compressed imported data itself (VertiPaq), and the report layout definition. Lab_01 opens one up in detail.
-
-**Q6. Your Power BI file works on your machine but a colleague can't open it. First suspicions?**
-*Model answer:* Version mismatch — a .pbix saved in a newer Desktop version may not open in an older one, and Desktop updates monthly. Check both versions via Help > About and update the older install. Second suspicion: file corruption from a sync tool if it lived in OneDrive/Dropbox.
-
-**Q7. Why seed a random data generator?**
-*Model answer:* Determinism. The same seed produces the same sequence, so datasets are reproducible across runs and machines, expected values in checks stay valid, and you can distinguish "my logic changed" from "the data changed."
-
-### Common interview traps
-
-- **"Power BI is free, right?"** — *Desktop* is free. Sharing via the Service needs Pro/Premium licensing. Answering just "yes" or just "no" both lose points; distinguish authoring from distribution.
-- **"Power BI runs on Mac?"** — No; Desktop is Windows-only. Mentioning the Service being browser-based (viewable anywhere) shows nuance.
-- **Confusing Power Query with DAX.** Power Query/M transforms data *before* it lands in the model; DAX calculates *over* the loaded model. Interviewers probe this constantly; it becomes crisp in Labs 02 and 04.
-- **Not knowing your tool's version cadence.** "It updates monthly, I check Help > About, teams standardize on staying current" is a small answer that signals real operational experience.
-
-### Real-world applications
-
-- Writing onboarding/setup documentation for a BI team (this lab is a template)
-- Standing up reproducible test datasets for pipeline and report testing
-- Auditing inherited models for Auto date/time bloat — one of the fastest "quick wins" a new hire can deliver
-- Establishing file/folder/versioning conventions on a new analytics project
-
-### Key takeaways
-
-1. **Defaults are decisions someone else made for you.** Auto date/time is friendly for demos and hostile at scale — audit defaults.
-2. **Reproducibility is a habit, not a feature.** Seeded data, versioned scripts, documented settings.
-3. **Dirty data is normal.** You built the defects yourself this time; Lab_02 teaches you to fix them where fixes belong — inside the tool, repeatably.
-4. **Environment discipline compounds.** Every later lab moves faster because this one was done carefully.
-
-**Next up:** [Lab_01_Power_BI_and_BI_Concepts.md](Lab_01_Power_BI_and_BI_Concepts.md) — what BI actually is, the Power BI ecosystem, and your first (deliberately naive) report on the NorthStar data.
+[Lab 01 — Power BI & BI Concepts](Lab_01_Power_BI_and_BI_Concepts.md): build a first, deliberately naive report straight on the OLTP tables — and see exactly why the guided lab needs a star schema.

@@ -1,257 +1,325 @@
 # Lab 04 — DAX Fundamentals: Measures, Filter Context & CALCULATE
 
-> **Module:** SK-06 Power BI Analytics Practitioner
-> **Estimated time:** 7–8 hours
-> **Builds on:** Lab_03 — open `NorthStar_Lab03.pbix`, **Save As** `NorthStar_Lab04.pbix`.
-> **Produces:** `NorthStar_Lab04.pbix` with a first measure library (~12 measures) in a dedicated measure table.
+> **Goal:** Build the guided lab's base measure library (Net Revenue, Total Cost, Gross Margin, Gross Margin %, Order Count, Average Order Value, Quantity Sold, Return Rate) plus `Revenue % of Company Total`, understand *why* each number changes per visual cell, and reconcile every measure with SQL control totals.
+> **Time:** 5–6 hours | **Difficulty:** Intermediate | **Prerequisites:** Lab 03 (`NorthStar_Lab03.pbix`: star schema, marked `dim_date`, hidden keys)
+> **Guided lab coverage:** PART 3 Step 3.1 (base measures) and the `Revenue % of Company Total` measure from Step 3.4; PART 6 Optimizations 3–4
+> **Produces:** `C:\DataEngineering\sk06\pbix\NorthStar_Lab04.pbix`
 
-DAX (Data Analysis Expressions) is the calculation language of Power BI, Analysis Services, and Fabric semantic models. It looks like Excel formulas and behaves like nothing you've used before — because every formula's answer depends on **where it is evaluated**. This lab teaches that evaluation model properly, because memorizing snippets without it is how people stay stuck at "intermediate" for years.
+## Learning objectives
 
----
+By the end of this lab you can:
 
-## 1. Environment Setup
+- Choose between a **measure** and a **calculated column**, and explain the cost of each.
+- Explain **filter context** (where filters come from and how they reach the fact table) and **row context** (iterators).
+- Use `CALCULATE` to change filter context, `REMOVEFILTERS` for "% of total", and `DIVIDE` for safe division.
+- Organise measures in a measure table with display folders, formats and descriptions.
+- Reconcile measures with an independent SQL query and with a DAX query.
 
-1. Open `NorthStar_Lab03.pbix` → Save As `C:\PowerBI_Labs\NorthStar\pbix\NorthStar_Lab04.pbix`.
-2. Verify the Lab_03 model: star schema intact, `dim_date` marked as date table, fiscal columns verified, hidden foreign keys.
-3. **Recommended (optional): DAX Studio** — free, from `daxstudio.org` → Downloads → installer → next-next-finish. It appears under **External Tools**. Used here only to peek at query behavior; everything works without it.
-4. New-ish Power BI versions include **DAX query view** (left edge). If you have it, you can test measures with `EVALUATE` queries without building visuals — handy but optional.
+**Key terms**
 
----
+| Term | Meaning |
+|---|---|
+| **Measure** | A named DAX formula evaluated at query time in the current filter context; never stored. "If it aggregates, it's a measure." |
+| **Calculated column** | A DAX formula evaluated once per row at refresh and stored in the model (costs memory). Prefer Power Query for row-level columns. |
+| **Filter context** | The set of filters active for one evaluation: visual rows/columns, slicers, page/report filters, cross-highlighting — propagated along relationships to the facts. |
+| **Row context** | "The current row" inside a calculated column or an iterator (`SUMX`, `AVERAGEX`, `FILTER`). Row context does **not** filter the model by itself. |
+| **CALCULATE** | Evaluates an expression under a **modified** filter context. The only common way to change context. |
+| **REMOVEFILTERS** | A CALCULATE modifier that removes filters from a table or columns (the modern, clearer name for that use of `ALL`). |
+| **DIVIDE** | Safe division: returns BLANK (or an alternate) instead of an error when the denominator is 0 or blank. |
 
-## 2. Business Context
-
-Lab_01 Failure 2: there was no drag-and-drop path to *revenue*, because revenue is logic, not a column. Every business runs on such defined numbers — revenue, margin, average order value, return rate — and the definitions have owners, edge cases, and consequences.
-
-The business value of DAX measures is **centralized definitions**: "Net Revenue" is written once, in one place, with one owner — and every visual, every report, every user gets the same number. Compare that to NorthStar's status quo, where revenue is re-derived in dozens of spreadsheet cells, each a chance to diverge. In the capstone, Daniel makes this a contractual requirement: 15+ measures, each with a written business definition (FR-09) — because his analysts' definitions of "turnover" had drifted apart and clients noticed.
-
-**Who consumes measures?** Everyone downstream — plus auditors and interviewers. **If measures are wrong**, they're wrong on every page simultaneously; centralization concentrates risk as well as truth. That's why this lab ends with validation against control numbers.
-
----
-
-## 3. Concept Explanation
-
-### 3.1 Measures vs calculated columns (the first fork in the road)
+### Measures vs calculated columns
 
 | | Calculated column | Measure |
 |---|---|---|
 | Computed | Once, at refresh — stored per row | At query time — never stored |
-| Evaluated in | **Row context** (current row) | **Filter context** (current filters) |
-| Cost | Disk/RAM (model size) | CPU (query time) |
-| Use for | Row-level attributes to slice/filter by | Anything you aggregate |
+| Evaluated in | Row context | Filter context |
+| Cost | Model size (RAM) | CPU at query time |
+| Use for | Attributes to slice or filter by | Anything you aggregate |
 
-Rule: **if it aggregates, it's a measure.** Columns are for attributes (and even then, prefer Power Query, as in Lab_02's `net_amount` — computed upstream, compresses at load).
+The guided lab's Part 6, Optimization 3, shows the classic mistake: a `margin_pct` *column* stored on 310,024 rows, which is also **wrong** at every total (an average of row percentages is not the total margin %). The measure `Gross Margin %` is smaller *and* correct.
 
-### 3.2 Filter context — the concept that explains everything
+### Filter context in one example
 
-A measure has no fixed answer. In a matrix of regions by month, the *same* measure is evaluated once per cell, and each cell first assembles a **filter context** — the set of filters coming from the visual's rows/columns, slicers, page filters, and cross-highlights — then applies it to the model (filters flowing 1→many along Lab_03's relationships), and only then evaluates the arithmetic over the surviving rows.
+In a matrix with categories on rows and fiscal years on columns, the cell *Grocery × 2026* evaluates `[Net Revenue]` like this:
 
-`Total Quantity` in the West/July cell = sum of quantity over *only* fact rows reachable from West and July. In the grand total cell, filter context is nearly empty, so it sums everything. **The formula never changed; the context did.** Once this clicks, DAX stops being magic.
+1. Collect filters: `dim_product[category_name] = "Grocery"`, `dim_date[Fiscal Year] = 2026`.
+2. Propagate them along the relationships (dimension → fact) to `fact_sales`.
+3. Evaluate `SUM(fact_sales[net_revenue])` over the surviving rows.
 
-### 3.3 Row context — the other context
+The formula never changes — the context does. The grand total cell simply has (almost) no filters.
 
-Inside a calculated column, or inside an **iterator** function, evaluation walks a table row by row; "the current row" is the **row context**. Crucially, row context does **not** filter the model, and filter context does not give you a current row. Confusing the two is the root of ~80% of beginner DAX errors.
+## Steps
 
-**Iterators** (`SUMX`, `AVERAGEX`, `MAXX`, ...) create row context on demand: `SUMX(table, expression)` evaluates the expression per row of `table` (itself already reduced by the filter context), then sums. This is how sum-of-products is done — Lab_01's revenue failure, solved.
+### Step 1 — Open a copy and create the measure table
 
-### 3.4 CALCULATE — the filter-context editor
+1. `docker compose start` in `C:\DataEngineering\sk06`.
+2. Open `NorthStar_Lab03.pbix` → **Save As** `C:\DataEngineering\sk06\pbix\NorthStar_Lab04.pbix`.
+3. **Home → Enter data** → leave the empty column, name the table **`_Measures`** → **Load**.
 
-`CALCULATE(expression, filter1, filter2, ...)` evaluates the expression **under a modified filter context**: each filter argument overrides or adds to the incoming filters. It is the single most important function in DAX and the only common way to *change* context rather than accept it.
+Measures technically live "in" a table. A dedicated table keeps a 27-measure library findable (the underscore sorts it first). After Step 2 you will hide its dummy `Column1`; the table icon then turns into a calculator.
 
-```dax
-CALCULATE ( [Net Revenue], dim_store[region] = "West" )         -- force West
-CALCULATE ( [Net Revenue], ALL ( dim_store ) )                  -- remove store filters (e.g., for % of total)
-CALCULATE ( [Net Revenue], KEEPFILTERS ( dim_product[category] = "Toys" ) )  -- intersect, don't override
-```
+✅ **Checkpoint:** `_Measures` appears at the top of the Data pane.
 
-`ALL` removes filters; `REMOVEFILTERS` is its modern, clearer alias for that use. Every "% of total", "share of parent", time-intelligence, and RLS-adjacent pattern is CALCULATE with different filter arguments.
+### Step 2 — The first measure, done properly
 
-Alternatives to DAX? Precompute aggregates upstream (SK-03-style) — fine for fixed grains, but the whole point of a semantic model is answering *any* slice at query time; only a context-aware language does that. MDX (the older cube language) and LookML solve the same problem in other stacks.
-
----
-
-## 4. Step-by-Step Implementation
-
-### Step 1 — Create a measure table
-
-Measures technically live "in" a table; scattering them across fact tables makes them hard to find. Convention: a dedicated, empty measure table.
-
-1. **Home → Enter data** → leave the single empty column, name the table `_Measures` → Load. (The underscore sorts it to the top of the Data pane.)
-2. After creating your first measure in it (Step 2), hide the table's dummy column; the table icon turns into a calculator glyph.
-
-**Why:** discoverability. In a 60-measure model, "where is that measure" must never be a question. (Capstone NFR-05 checks organization.)
-
-### Step 2 — First measures: the explicit basics
-
-Right-click `_Measures` → **New measure**, one at a time:
+Right-click `_Measures` → **New measure**. The formula bar opens. Replace `Measure =` with:
 
 ```dax
-Total Quantity = SUM ( fact_sales[quantity] )
+Net Revenue =
+SUM(fact_sales[net_revenue])
+```
+
+Press Enter. Then, with the measure selected:
+
+1. **Measure tools → Format** → Currency, 2 decimals.
+2. **Model view** → select the measure → **Properties** pane → **Display folder**: `Sales`; **Description**: `Net revenue = quantity × unit price − discount, per order line (the CFO's definition).`
+3. Hide `_Measures[Column1]`.
+
+**Why the name has no brackets or prefix:** the guided lab groups measures with **display folders** (`Sales`, `Time Intelligence`, `KPI`, …). A name like `[Sales] Net Revenue` would contain brackets, which DAX uses to *reference* measures — `[Sales] Net Revenue - [Sales] Total Cost` could not be parsed.
+
+**Verify:** add a **Card** with `Net Revenue`, and a slicer with `dim_date[Fiscal Year]` set to **2026**.
+
+**Expected output:** **$11,862,350.26** — exactly the FY2026 control total from Lab 00 Step 9.
+
+**Common mistake:** *New column* and *New measure* sit next to each other. If your "measure" shows a value on every row in Table view, it is a column — delete it and redo.
+
+✅ **Checkpoint:** the card shows $11,862,350.26 for FY2026.
+
+### Step 3 — The rest of the base measures (guided lab Step 3.1)
+
+Create each as a separate measure in `_Measures`, display folder `Sales`. Formats in the table below.
+
+```dax
+Total Cost =
+SUM(fact_sales[total_cost])
 ```
 
 ```dax
-Net Revenue = SUM ( fact_sales[net_amount] )
+Gross Margin =
+[Net Revenue] - [Total Cost]
 ```
 
 ```dax
-Order Count = DISTINCTCOUNT ( fact_sales[order_id] )
+// WHY DIVIDE not "/": DIVIDE handles division by zero gracefully.
+// BLANK() is the correct alternate result — not 0 (which would
+// incorrectly suggest a 0% margin rather than no data).
+Gross Margin % =
+DIVIDE([Gross Margin], [Net Revenue], BLANK())
 ```
 
-Format each immediately (**Measure tools** ribbon): `Net Revenue` currency 0 decimals; counts whole numbers with thousands separators. *Formatting at creation is a habit — unformatted measures look broken to stakeholders and get "fixed" inconsistently per visual.*
+```dax
+Order Count =
+DISTINCTCOUNT(fact_sales[order_id])
+```
 
-**Verification:** card with `Net Revenue` — a plausible total (tens of millions given 50k lines). Matrix rows `dim_store[region]`, values all three measures — four distinct rows plus a total. Note you dragged **the measure**, not a column: no `Σ` ambiguity, one authored definition.
+```dax
+Average Order Value =
+DIVIDE([Net Revenue], [Order Count], BLANK())
+```
 
-**Common mistake:** *New measure* vs *New column* on the right-click menu are adjacent. If your "measure" appears as a column with rows of values in Table view, you made a column — delete and redo. Measures never appear in Table view.
+```dax
+Quantity Sold =
+SUM(fact_sales[quantity])
+```
 
-### Step 3 — Prove you understand filter context (5-minute exercise)
+```dax
+Return Rate =
+VAR TotalOrders    = DISTINCTCOUNT(fact_sales[order_id])
+VAR ReturnedOrders =
+    CALCULATE(
+        DISTINCTCOUNT(fact_sales[order_id]),
+        fact_sales[is_returned] = 1
+    )
+RETURN DIVIDE(ReturnedOrders, TotalOrders, BLANK())
+```
 
-Build a matrix: rows `dim_product[category]`, columns `dim_date[Fiscal Year]`, values `Net Revenue`. For any one inner cell, say out loud what its filter context is ("category = X AND fiscal year = FYnnnn, flowing to fact_sales via two relationships"). Then explain the column-total cell (year only) and the grand total (no filters). If you can narrate all three, you understand filter context better than most working analysts. Keep this matrix on the page — it's your test harness for the rest of the lab.
+| Measure | Format |
+|---|---|
+| Total Cost, Gross Margin, Average Order Value | Currency, 2 decimals |
+| Gross Margin %, Return Rate | Percentage, 2 decimals |
+| Order Count, Quantity Sold | Whole number, thousands separator |
 
-### Step 4 — The iterator you've been waiting for
+**Reading the formulas:**
 
-Lab_02 pre-computed `net_amount` in Power Query, which is best practice. But you must also be able to do it in DAX — sources aren't always yours to edit:
+- `Gross Margin` and `Average Order Value` **reference other measures** (`[Net Revenue]`). Define once, reuse everywhere — change the definition of revenue and every dependent measure follows.
+- `Order Count` uses `DISTINCTCOUNT` because the grain is the order **line**: an order with three lines must count once.
+- `Return Rate` uses **variables** (`VAR … RETURN`): each is evaluated once and reused (guided lab Part 6, Optimization 4). Inside `CALCULATE`, `fact_sales[is_returned] = 1` adds a filter to the current context — so "returned orders in FY2026 in the Northeast" works automatically.
+
+**Verify** — a **Table** visual with all eight measures, Fiscal Year slicer = 2026:
+
+| Measure | Expected (FY2026) |
+|---|---|
+| Net Revenue | $11,862,350.26 |
+| Total Cost | $7,655,104.68 |
+| Gross Margin | $4,207,245.58 |
+| Gross Margin % | 35.47% |
+| Order Count | 63,879 |
+| Average Order Value | $185.70 |
+| Quantity Sold | 179,431 |
+| Return Rate | 3.93% |
+
+✅ **Checkpoint:** all eight values match.
+
+### Step 4 — See filter context at work
+
+Build a **Matrix**: rows `dim_product[category_name]`, columns `dim_date[Fiscal Year]`, values `Net Revenue`. Clear the Fiscal Year slicer (or delete it).
+
+**Expected output** (Fiscal Years 2024–2026; empty years do not appear):
+
+| category_name | 2024 | 2025 | 2026 |
+|---|---|---|---|
+| Apparel | $1,556,310.35 | $1,661,332.87 | $1,799,375.91 |
+| Electronics | $2,171,036.33 | $2,314,105.39 | $2,611,036.53 |
+| Grocery | $1,081,815.83 | $1,185,238.19 | $1,275,814.16 |
+| Home & Garden | $2,443,954.21 | $2,748,447.30 | $2,942,530.95 |
+| Sports & Outdoors | $2,705,655.90 | $2,873,909.97 | $3,233,592.71 |
+| **Total** | **$9,958,772.62** | **$10,783,033.72** | **$11,862,350.26** |
+
+Say out loud, for three cells:
+
+- *Grocery × 2026:* category = Grocery **and** Fiscal Year = 2026, flowing from `dim_product` and `dim_date` into `fact_sales`.
+- *Column total 2026:* only Fiscal Year = 2026.
+- *Grand total:* no filters — all three years, $32,604,156.60.
+
+If you can narrate all three, you understand filter context better than many working analysts. Keep this matrix: it is your test harness.
+
+✅ **Checkpoint:** the matrix matches the table above.
+
+### Step 5 — Row context: the same revenue with an iterator
+
+`net_revenue` was computed per line in Lab 02. You must also be able to compute row-level logic in DAX when the source is not yours to change. Create a practice measure (display folder `Practice`):
 
 ```dax
 Net Revenue (X) =
-SUMX (
+SUMX(
     fact_sales,
-    fact_sales[quantity] * fact_sales[unit_price] * ( 1 - fact_sales[discount_pct] )
+    fact_sales[quantity] * fact_sales[unit_price] - fact_sales[discount_amount]
 )
 ```
 
-How it evaluates in a West/FY2026 cell: filter context reduces `fact_sales` to West+FY2026 rows → SUMX walks those rows (row context), computes the product per row → sums. Filter context *then* row context, in that order, every time.
+`SUMX` first receives `fact_sales` **already reduced by the filter context** of the cell, then walks those rows one by one (**row context**), computes the expression per row, and sums. Filter context first, then row context — every time.
 
-**Verification:** `Net Revenue (X)` equals `Net Revenue` in every cell of your test matrix. If they diverge, your Power Query `net_amount` formula and this one disagree (check the discount handling).
+**Verify:** add `Net Revenue (X)` to the matrix — identical to `Net Revenue` in every cell. Then delete the practice measure (the guided lab does not need it; the stored column is cheaper at query time).
 
-```dax
-Avg Order Value =
-DIVIDE ( [Net Revenue], [Order Count] )
-```
+✅ **Checkpoint:** the two measures agreed in every cell before you deleted the practice one.
 
-**Always `DIVIDE`, never `/`:** DIVIDE returns blank (or a chosen alternate) on divide-by-zero instead of an error that kills the visual. Blank cells are fine; error dialogs in front of a CFO are not.
+### Step 6 — CALCULATE and "% of company total"
 
-### Step 5 — CALCULATE: returns, shares, and rates
-
-Lab_02 flagged returns; now put the flag to work:
+Add this measure from the guided lab's Step 3.4 (display folder `Analysis`, format Percentage, 2 decimals):
 
 ```dax
-Returned Quantity =
-CALCULATE ( ABS ( [Total Quantity] ), fact_sales[is_return] = TRUE () )
-```
-
-```dax
-Sold Quantity =
-CALCULATE ( [Total Quantity], fact_sales[is_return] = FALSE () )
-```
-
-```dax
-Return Rate % =
-DIVIDE ( [Returned Quantity], [Sold Quantity] )
-```
-
-Format `Return Rate %` as percentage, 1 decimal. **Verification:** ~1% globally (the Lab_00 injection rate). Slice by category — variation is expected.
-
-Now the classic **% of total**, which is CALCULATE+ALL:
-
-```dax
-Revenue % of All Regions =
-DIVIDE (
+// REMOVEFILTERS(dim_store) removes every store/district/region filter,
+// so the denominator is the whole company. Filters on other tables —
+// the Fiscal Year slicer on dim_date, a category filter — are PRESERVED.
+Revenue % of Company Total =
+DIVIDE(
     [Net Revenue],
-    CALCULATE ( [Net Revenue], REMOVEFILTERS ( dim_store ) )
+    CALCULATE(
+        [Net Revenue],
+        REMOVEFILTERS(dim_store)
+    ),
+    BLANK()
 )
 ```
 
-In a West cell: numerator sees West; denominator *removes* the store filters, seeing all regions. **Verification:** region matrix — the four percentages sum to 100%; the total row shows 100%. Then add a `Fiscal Year` slicer and select one year: percentages still sum to 100% *within the year*, because `REMOVEFILTERS(dim_store)` removed only store filters, leaving date filters intact. That selectivity is the entire art of CALCULATE.
+In a Northeast cell, the numerator sees Northeast; the denominator's `CALCULATE` removes all `dim_store` filters and sees the whole company. The date filter is untouched, so the share is "of the company, in the selected year".
 
-**Common mistake:** `REMOVEFILTERS()` with no argument removes *everything* (dates too) — the % then answers a different business question. Be surgical.
+**Verify:** matrix rows `dim_store[region_name]`, values `Net Revenue` and `Revenue % of Company Total`, Fiscal Year slicer = 2026:
 
-### Step 6 — Filter with FILTER when the condition needs a row
+| region_name | Net Revenue | Revenue % of Company Total |
+|---|---|---|
+| Midwest | $3,053,466.54 | 25.74% |
+| Northeast | $3,346,490.01 | 28.21% |
+| Southeast | $3,103,316.68 | 26.16% |
+| West | $2,359,077.03 | 19.89% |
+| **Total** | **$11,862,350.26** | **100.00%** |
 
-Boolean filter arguments (`col = value`) only work on single columns. Conditions comparing columns or using measures need `FILTER`:
+**Why the whole table, not just two columns?** The original guided lab removed filters only from `region_name` and `store_name`. Prove the difference: add a slicer on `dim_store[district_name]` and pick **New England**. The correct measure shows **8.27%** (New England's $980,819.76 share of the company). A version that removes only region and store filters would keep the district filter in the denominator and show **100%** — the denominator would be New England itself. Clear the district slicer afterwards.
+
+**Common mistake:** `REMOVEFILTERS()` with no argument removes *every* filter, dates too — the % then answers a different question.
+
+✅ **Checkpoint:** the four regions sum to 100% for FY2026, and New England shows 8.27%.
+
+### Step 7 — Reconcile with SQL and with a DAX query
+
+**SQL (independent of Power BI):**
+
+```powershell
+docker exec -it sk06-postgres psql -U postgres -d northstar
+```
+
+```sql
+SELECT
+    ROUND(SUM(ol.quantity * ol.unit_price - ol.discount_amount), 2)  AS net_revenue,
+    ROUND(SUM(ol.quantity * p.unit_cost), 2)                          AS total_cost,
+    COUNT(DISTINCT o.order_id)                                        AS orders,
+    COUNT(DISTINCT o.order_id) FILTER (WHERE o.is_returned = 1)       AS returned_orders,
+    SUM(ol.quantity)                                                  AS quantity
+FROM sales.orders o
+JOIN sales.order_lines ol ON ol.order_id = o.order_id
+JOIN products.products p  ON p.product_id = ol.product_id
+WHERE o.order_date BETWEEN DATE '2025-07-01' AND DATE '2026-06-30';
+```
+
+**Expected output:**
+
+```
+ net_revenue | total_cost | orders | returned_orders | quantity
+-------------+------------+--------+-----------------+----------
+ 11862350.26 | 7655104.68 |  63879 |            2509 |   179431
+(1 row)
+```
+
+2,509 / 63,879 = 3.93% — the `Return Rate`. Quit with `\q`.
+
+**DAX query view** (left edge of Power BI Desktop; in older versions use DAX Studio from daxstudio.org): paste and **Run**:
 
 ```dax
-Big Ticket Revenue =
-CALCULATE (
-    [Net Revenue],
-    FILTER ( fact_sales, fact_sales[quantity] * fact_sales[unit_price] >= 500 )
+EVALUATE
+SUMMARIZECOLUMNS(
+    dim_date[Fiscal Year],
+    "Net Revenue", [Net Revenue],
+    "Order Count", [Order Count],
+    "Gross Margin %", [Gross Margin %]
 )
+ORDER BY dim_date[Fiscal Year]
 ```
 
-`FILTER(table, condition)` is itself an iterator (row context!) returning the surviving rows, which CALCULATE then applies as a filter. Prefer boolean arguments when possible (they're faster); reach for FILTER when the condition genuinely needs row-by-row logic.
+**Expected output:** three rows — 2024: 9,958,772.62 / 54,446; 2025: 10,783,033.72 / 58,745; 2026: 11,862,350.26 / 63,879 — matching Lab 00's control totals. (Years with no sales are dropped because every measure is blank.)
 
-### Step 7 — Actual vs target (two facts, one context)
+✅ **Checkpoint:** SQL, DAX query and visuals agree to the cent.
 
-Lab_03's conformed `dim_region` earns its keep:
+### Step 8 — Document and save
 
-```dax
-Target Revenue = SUM ( fact_targets[target_revenue] )
-```
+1. Give every measure a one-sentence **Description** (Model view → Properties). In the Service, descriptions appear as tooltips for report users.
+2. Check the display folders: `Sales` (8 measures), `Analysis` (1).
+3. **Ctrl+S**.
 
-```dax
-Revenue vs Target % =
-DIVIDE ( [Net Revenue], [Target Revenue] )
-```
+✅ **Checkpoint:** `_Measures` shows folders `Analysis` and `Sales`; every measure is formatted and described.
 
-**Verification:** matrix rows `dim_region[region]`, columns `dim_date[Month]` (sorted by Month Sort — Lab_03), values all three. Both facts populate every cell because both are filtered through the *shared* dimensions. If `Target Revenue` repeats one value everywhere, its relationships to `dim_region`/`dim_date` are missing or inactive — Model view, check the lines.
+## Troubleshooting
 
-### Step 8 — Validate against control numbers, then save
+| Symptom | Cause | Fix |
+|---|---|---|
+| *The syntax for 'Net' is incorrect* | Measure name with brackets, e.g. `[Sales] Net Revenue` | Use plain names and display folders. |
+| Measure shows the same value for every region | Region filter cannot reach the fact | Check Model view: `dim_store` → `fact_sales` relationship must be active, single direction, on `store_id`. |
+| Net Revenue ≠ SQL control total | Slicer on a different year, or the data was regenerated | Check the slicer; refresh the model; rerun the SQL. |
+| Order Count far too high | `COUNT` or `COUNTROWS` used instead of `DISTINCTCOUNT` | Orders have several lines — use `DISTINCTCOUNT(fact_sales[order_id])`. |
+| Gross Margin % shows 3547% | Format applied twice or measure multiplied by 100 | Keep the formula a fraction; set the format to Percentage. |
+| A "measure" appears as a column in Table view | Created with *New column* | Delete it; right-click `_Measures` → **New measure**. |
+| `Revenue % of Company Total` is 100% everywhere | `CALCULATE` missing, or `REMOVEFILTERS` on the wrong table | Compare with the code above. |
+| DAX query view not visible | Older Power BI Desktop | Update Power BI Desktop, or use DAX Studio. |
 
-1. In PowerShell, compute an independent control total:
+## Key takeaways
 
-   ```powershell
-   $s = Import-Csv C:\PowerBI_Labs\NorthStar\data\sales.csv
-   ($s | Measure-Object -Sum quantity).Sum
-   ```
+- If it aggregates, it is a measure. Build small, named, formatted, documented measures and compose them (`Gross Margin` reuses `Net Revenue` and `Total Cost`).
+- Filter context is assembled per visual cell and flows from dimensions to facts; row context exists inside iterators and calculated columns.
+- `CALCULATE` changes filter context. `REMOVEFILTERS(dim_store)` gives "% of company" that still respects the date slicer.
+- `DIVIDE` with `BLANK()` keeps "no data" honest; variables avoid double evaluation.
+- Trust nothing you have not reconciled: FY2026 Net Revenue $11,862,350.26, 63,879 orders, Gross Margin 35.47%, Return Rate 3.93%.
 
-2. Compare to the `Total Quantity` card (no filters). They must match exactly. Repeat mentally for one region if you're feeling thorough.
-3. Document each measure: select it → **Measure tools** → add a **Description** (right-click in Model view → Properties → Description): one plain-English business definition each. This is Daniel's FR-09 habit, started now.
-4. Save `NorthStar_Lab04.pbix`.
+**Interview check:** *What does CALCULATE do?* — It evaluates an expression under a modified filter context: its filter arguments add, replace or remove filters before evaluation; % of total and time intelligence are CALCULATE with specific filters. *SUM vs SUMX?* — SUM aggregates one column; SUMX iterates a table in row context, evaluates an expression per row, then sums.
 
----
+## Next
 
-## 5. Production Engineering Practices
-
-- **A measure library is an API.** Named, formatted, documented, organized (`_Measures`, display folders as it grows). Consumers build on it without reading its internals — exactly like a code library from SK-01. Breaking a measure definition is a breaking API change: version notes matter.
-- **Validation against independent control totals.** Never ship a measure you haven't reconciled against a number computed *outside* the model. *Failure story:* a retailer's new "Net Sales" measure silently included returns as positives (an ABS in the wrong place). It overstated revenue ~2% for a quarter before an accountant reconciling to the GL caught it. A one-line PowerShell control total on day one would have, too.
-- **DIVIDE, formats, descriptions — defaults of professionals.** Each is 10 seconds at creation and an incident when skipped.
-- **Measure once, reference everywhere.** Build compound measures from base measures (`[Net Revenue]`, not a re-typed SUM) so a definition change propagates. You did this in every ratio above.
-- **Prefer upstream computation** for row-level logic (Power Query column) and DAX for context-dependent aggregation — cost model: storage vs query CPU.
-
----
-
-## 6. Reflection
-
-### What you learned
-
-Measures vs columns; filter context assembled per visual cell; row context and iterators; CALCULATE as the filter-context editor; ALL/REMOVEFILTERS for % of total; FILTER for row-wise conditions; DIVIDE; cross-fact measures through conformed dimensions; control-total validation.
-
-### Interview questions
-
-1. **Measure vs calculated column?**
-   *Columns compute once at refresh in row context and are stored per row — use for attributes you slice by (better yet, do them in Power Query). Measures compute at query time in filter context and are never stored — use for anything aggregated. "If it aggregates, it's a measure."*
-2. **Explain filter context in one minute.**
-   *The set of filters active where a formula is evaluated — visual coordinates, slicers, page/report filters — propagated through relationships one-to-many to the facts. The same measure returns different values per cell because each cell has different filter context; the grand total is just the near-empty context.*
-3. **What does CALCULATE actually do?**
-   *Evaluates an expression under a modified filter context: its filter arguments override or add to existing filters on those columns before evaluation. It's the only mainstream way to change context — % of total, time intelligence, and most advanced patterns are CALCULATE with specific filter arguments.*
-4. **SUM vs SUMX?**
-   *SUM aggregates one existing column. SUMX iterates a table in row context evaluating an expression per row, then sums — needed when the addend must be computed (qty × price). SUM is effectively sugar over SUMX on a single column.*
-5. **How do you compute % of total that respects a date slicer but ignores region selection?**
-   *Numerator: the base measure. Denominator: CALCULATE of it with REMOVEFILTERS limited to the region/store table only, leaving date filters untouched. The scope of what you remove defines the business question.*
-6. **Why DIVIDE instead of `/`?**
-   *Graceful divide-by-zero: DIVIDE returns BLANK (or a specified alternate) instead of erroring the visual. Sparse business data hits zero denominators constantly.*
-7. **How would you validate a new revenue measure before shipping?**
-   *Reconcile the unfiltered total and at least one sliced value against an independent computation — source query, warehouse SQL, or a script over the raw files. Then check edge contexts: grand total, blank dimensions (unknown member), single-day filter.*
-8. **Trap: "This measure works in the card but shows the same value for every region — DAX bug?"**
-   *Almost never DAX — it means region filters aren't reaching the measure's table: missing/inactive relationship, wrong column used, or the measure hard-overrides region filters with ALL. Diagnose the filter path in Model view first.*
-
-### Common traps
-
-- Answering "CALCULATE filters the data" — it *modifies filter context*; sloppy phrasing signals shallow understanding.
-- Reaching for `FILTER(ALL(table), ...)` everywhere — often slower and wrong under other slicers; use targeted boolean filters or REMOVEFILTERS on specific columns.
-
-### Key takeaways
-
-1. Context is the language: filter context per cell, row context per iterated row, CALCULATE as the editor between them.
-2. Build small, named, documented measures and compose them.
-3. Trust nothing you haven't reconciled to a control number.
-
-**Next up:** [Lab_05_Advanced_DAX_and_Time_Intelligence.md](Lab_05_Advanced_DAX_and_Time_Intelligence.md) — YTD, YoY, and target-vs-actual on the July-1 fiscal calendar, plus variables and disconnected tables.
+[Lab 05 — Advanced DAX & Time Intelligence](Lab_05_Advanced_DAX_and_Time_Intelligence.md): fiscal YTD with `"6/30"`, prior year, YoY, moving averages, targets with `USERELATIONSHIP`, the RAG status, ship-date revenue and the 80/20 rule.
