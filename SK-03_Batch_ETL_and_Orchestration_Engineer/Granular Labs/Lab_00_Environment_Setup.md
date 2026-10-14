@@ -1,91 +1,57 @@
-# Lab 00 — Environment Setup: Docker, Spark, Airflow, dbt, and MinIO on Windows 11
+# Lab 00 — Environment Setup
 
-> **Module:** SK-03 Batch ETL and Orchestration Engineer
-> **Time estimate:** 3–5 hours (most of it is downloads and verification — don't rush it)
-> **Prerequisites:** SK-01 (Python) and SK-02 (SQL) completed. No Docker, Spark, Airflow, or dbt experience required — we explain everything.
+> **Goal:** Build, on your own laptop, the complete local data platform that every SK-03 lab and the end-to-end guided lab run on: MinIO (S3), Spark, Airflow, a Postgres warehouse, and dbt.
+> **Time:** 180–300 min (mostly downloads) | **Difficulty:** Beginner | **Prerequisites:** SK-01 and SK-02 completed
+> **Guided lab coverage:** PREREQUISITES (the whole local stack); the local equivalents of AWS S3, Glue, Redshift and Slack used throughout Parts 1–4
 
----
+## Learning objectives
 
-## What this lab is for
+By the end of this lab you can:
 
-Every other lab in this module runs on the environment you build **here, once**. By the end of this lab you will have a complete, production-shaped batch data platform running on your own laptop:
+- Explain what Docker, an image, a container, and Docker Compose are — and why data platforms ship as containers.
+- Start, stop, inspect, and reset an eight-container platform with `docker compose`.
+- Say which hostname to use from Windows (`localhost:<port>`) and which to use from inside a container (the service name, e.g. `minio:9000`).
+- Map each local service to the AWS service it stands in for in the guided lab.
 
-- **Docker Desktop** — runs everything below in isolated containers
-- **MinIO** — an S3-compatible object store (your local stand-in for Amazon S3)
-- **Apache Spark** — a distributed data processing engine (master + worker)
-- **Apache Airflow** — a workflow orchestrator (webserver + scheduler)
-- **PostgreSQL ×2** — one as Airflow's internal database, one as your analytics **warehouse**
-- **dbt** — a SQL transformation tool (installed inside the Airflow container)
+| Guided lab (AWS) | This lab (local, free) | How you reach it |
+|---|---|---|
+| Amazon S3 bucket `urbangear-data-lake` | **MinIO** container `minio` | Console http://localhost:9001 · code: `http://minio:9000` |
+| AWS Glue (Spark) | **PySpark** inside the Airflow image (+ a small Spark cluster for learning) | `spark-submit` · Spark UI http://localhost:8081 |
+| Airflow (MWAA) | **Airflow 2.9.3** containers | http://localhost:8080 |
+| Amazon Redshift | **Postgres 16** container `warehouse` | Windows: `localhost:5433` · code: `warehouse:5432` |
+| dbt Cloud / dbt in CI | **dbt-postgres 1.8** inside the Airflow image | `docker exec ... dbt ...` |
+| Slack alerts | A logged `[ALERT]` line (real Slack optional) | Airflow task logs |
 
-Nothing touches the cloud. Nothing costs money. Everything is deletable with one command.
+## Steps
 
-**Do not skip verification steps.** Half of all "my pipeline is broken" problems in later labs are actually environment problems that a five-second check here would have caught.
-
----
-
-## 1. Environment Setup
-
-### 1.1 What you need before starting
+### Step 1 — Check your machine
 
 | Requirement | Minimum | How to check |
 |---|---|---|
-| Windows 11 (or Windows 10 21H2+) | 64-bit, virtualization enabled | `winver` in Start menu |
-| RAM | 16 GB strongly recommended (8 GB works but is tight) | Task Manager → Performance |
-| Free disk space | 25 GB | File Explorer → This PC |
-| CPU virtualization | Enabled in BIOS | Task Manager → Performance → CPU → "Virtualization: Enabled" |
-| Admin rights | Required for installs | You'll know when an installer asks |
+| Windows 11 (or Windows 10 21H2+) | 64-bit, virtualization enabled | Task Manager → Performance → CPU → "Virtualization: Enabled" |
+| RAM | 16 GB recommended (8 GB works, tightly) | Task Manager → Performance |
+| Free disk space | **25 GB** on C: | File Explorer → This PC |
+| Admin rights | Needed for installs | — |
 
-**If "Virtualization: Disabled"** — reboot into BIOS/UEFI (usually F2, F10, or Del at boot) and enable "Intel VT-x" / "AMD-V" / "SVM Mode". Docker cannot run without it.
+If virtualization is **Disabled**, reboot into BIOS/UEFI (F2, F10 or Del at boot) and enable "Intel VT-x" / "AMD-V" / "SVM Mode".
 
-> **macOS/Linux readers:** install Docker Desktop for Mac or Docker Engine for Linux; skip the WSL2 sections. Everything from section 1.5 onward is identical because it all runs inside containers.
+**Expected output:** all four rows satisfied.
 
-### 1.2 What is WSL2, and why does Docker need it?
+✅ **Checkpoint:** virtualization enabled and ≥ 25 GB free.
 
-**WSL2 (Windows Subsystem for Linux, version 2)** is a lightweight Linux virtual machine built into Windows. Docker containers are a Linux technology — they need a Linux kernel to run. On Windows, Docker Desktop uses WSL2 as that kernel. You install WSL2 once, and Docker manages it for you afterwards; you rarely interact with it directly.
+### Step 2 — Install WSL2 and Docker Desktop
 
-**Install WSL2.** Open **PowerShell as Administrator** (Start → type "PowerShell" → right-click → Run as administrator):
+**WSL2** (Windows Subsystem for Linux 2) is a small Linux virtual machine built into Windows. Containers are a Linux technology, so Docker Desktop runs them inside WSL2.
+
+Open **PowerShell as Administrator** and run:
 
 ```powershell
 wsl --install
 ```
 
-- **What this does:** enables the WSL feature, installs the Linux kernel, and installs Ubuntu as a default distribution.
-- **Expected output:** progress messages ending with a prompt to **restart your computer**. Restart.
-- **After restart:** an Ubuntu window may open asking you to create a Linux username/password. Pick anything memorable (this is separate from your Windows login). You can close the window afterwards.
+Restart when asked. Then install **Docker Desktop** from https://www.docker.com/products/docker-desktop/ (keep "Use WSL 2 instead of Hyper-V" ticked), start it, and wait until it says **Engine running**.
 
-**Verify:**
-
-```powershell
-wsl --status
-```
-
-Expected output includes `Default Version: 2`. If it says version 1, run:
-
-```powershell
-wsl --set-default-version 2
-```
-
-**Common problems:**
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| `wsl --install` says "not recognized" | Old Windows 10 build | Run Windows Update; you need 21H2 or later |
-| Error 0x80370102 | Virtualization disabled | Enable VT-x/AMD-V in BIOS (see 1.1) |
-| "WSL 2 requires an update to its kernel component" | Kernel out of date | `wsl --update` in admin PowerShell |
-
-### 1.3 Install Docker Desktop
-
-**What is Docker?** Docker packages software into **containers** — self-contained boxes holding an application plus everything it needs (OS libraries, Python, Java, config). A container runs identically on your laptop and on a production server. That is why the entire modern data stack ships as Docker images: instead of "install Java 17, then Spark 3.5, then set six environment variables," you run one command and get a working Spark.
-
-**An image is the recipe; a container is the running cake.** You download images once; you start/stop containers as often as you like.
-
-1. Download Docker Desktop from **https://www.docker.com/products/docker-desktop/** (choose Windows — AMD64 for nearly all machines).
-2. Run the installer. When asked, **keep "Use WSL 2 instead of Hyper-V" checked**.
-3. Restart if prompted, then launch **Docker Desktop** from the Start menu.
-4. Accept the service agreement. You may skip sign-in — no account is needed for this module.
-5. Wait for the whale icon in the system tray to stop animating and the Docker Desktop window to say **"Engine running"**.
-
-**Configure resources.** Docker Desktop → Settings (gear icon) → **Resources**. With the WSL2 backend, memory is managed by Windows automatically, but you should cap it so Spark doesn't starve your laptop. Create a file named `.wslconfig` in your Windows home folder (`C:\Users\<YourName>\.wslconfig`) with:
+Cap the memory Docker may use: create `C:\Users\<YourName>\.wslconfig` containing
 
 ```ini
 [wsl2]
@@ -93,76 +59,191 @@ memory=10GB
 processors=4
 ```
 
-(Use `memory=6GB` on an 8 GB machine.) Then in PowerShell: `wsl --shutdown` and restart Docker Desktop.
+(use `memory=6GB` on an 8 GB laptop), then run `wsl --shutdown` and restart Docker Desktop.
 
-**Verify Docker works** (regular PowerShell, no admin needed):
+Verify in a **normal** PowerShell window:
 
 ```powershell
+wsl --status
 docker --version
 docker run --rm hello-world
 ```
 
-- **Expected output:** a version like `Docker version 27.x` (any recent version is fine — "latest stable" is the rule in this module), then a message beginning **"Hello from Docker!"**.
-- **What just happened:** Docker downloaded a tiny image, ran it as a container, printed a message, and (because of `--rm`) deleted the container. You just ran your first container.
+**Expected output:**
 
-**Common problems:**
-
-| Symptom | Fix |
-|---|---|
-| `docker: command not found` | Docker Desktop isn't running, or you didn't restart PowerShell after install. Launch Docker Desktop, open a NEW PowerShell window. |
-| "Docker Desktop is unable to start" | Settings → General → confirm "Use the WSL 2 based engine" is checked; run `wsl --update` |
-| Painfully slow downloads | Corporate proxy/VPN — try off VPN, or configure the proxy in Docker Desktop settings |
-
-### 1.4 Create the project folder structure
-
-All labs use **one** project folder. We recommend keeping it out of OneDrive-synced folders (file-sync tools fight with Docker volume mounts).
-
-```powershell
-mkdir C:\projects\sk03-batch-etl
-cd C:\projects\sk03-batch-etl
-mkdir dags, jobs, dbt, data, logs, plugins, config, docker
+```
+Default Version: 2
+Docker version 27.x.x, build ...
+...
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
 ```
 
-**What each folder is for (you'll fill them across the labs):**
+**What just happened:** Docker downloaded a tiny **image** (a packaged filesystem + start command), ran it as a **container** (a running instance of the image), printed a message, and deleted the container (`--rm`). *Image = recipe; container = the cake.*
 
-| Folder | Purpose | Used from |
+✅ **Checkpoint:** you saw `Hello from Docker!`.
+
+### Step 3 — Create the project folder
+
+All SK-03 work lives in **one** folder. Keep it **out of OneDrive** (and Dropbox/Google Drive): sync tools lock and rewrite files while Docker is reading them, which causes baffling errors.
+
+```powershell
+mkdir C:\DataEngineering\sk03
+cd C:\DataEngineering\sk03
+mkdir dags, jobs, dbt, dbt\profiles, data, logs, plugins, docker, sql
+dir
+```
+
+**Expected output:** a listing with these nine folders: `dags`, `data`, `dbt`, `docker`, `jobs`, `logs`, `plugins`, `sql` (and `dbt\profiles` inside `dbt`).
+
+| Folder | What goes in it | First used |
 |---|---|---|
-| `dags\` | Airflow DAG definitions (Python files that describe workflows) | Lab 04 |
-| `jobs\` | PySpark job scripts | Lab 02 |
-| `dbt\` | Your dbt project (SQL models and tests) | Lab 06 |
-| `data\` | Sample input files you generate | Lab 01 |
-| `logs\` | Airflow task logs (mounted so you can read them from Windows) | Lab 04 |
-| `plugins\` | Airflow plugins (stays mostly empty) | — |
-| `config\` | Shared configuration files | Lab 05 |
-| `docker\` | The custom Airflow Dockerfile (next section) | now |
+| `jobs\` | Python and PySpark scripts (`generate_orders.py`, `etl_job.py`, ...) | Lab 01 |
+| `dags\` | Airflow DAG files | Lab 05 |
+| `dbt\urbangear\`, `dbt\profiles\` | The dbt project and its connection profile | Lab 08 |
+| `sql\` | `warehouse_init.sql` — creates the warehouse schemas/table | this lab |
+| `docker\` | The custom Airflow `Dockerfile` | this lab |
+| `logs\`, `plugins\`, `data\` | Airflow logs, (unused) plugins, scratch files | — |
 
-**Verify:** `dir` shows all eight folders.
+✅ **Checkpoint:** `cd C:\DataEngineering\sk03` works and `dir` shows the folders.
 
-### 1.5 The docker-compose file — your entire platform in one file
+### Step 4 — Write the custom Airflow image (`docker\Dockerfile`)
 
-**What is docker-compose?** Running six containers by hand, wiring their networks and ports, would be miserable. **Docker Compose** lets you declare the whole stack in one YAML file and start it with one command. The file below **is your data platform**. Read the comments — every line teaches you something about how these tools connect in production.
+The stock Airflow image has no Java, PySpark or dbt. We extend it. Create `C:\DataEngineering\sk03\docker\Dockerfile` (VS Code: `code .` from the project folder):
 
-Create `C:\projects\sk03-batch-etl\docker-compose.yml` in a text editor (VS Code recommended — `code .` from the project folder if you have it). Type or paste **exactly** this:
+```dockerfile
+FROM apache/airflow:2.9.3-python3.11
+
+# ---- Java: PySpark runs on the JVM ---------------------------------------
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openjdk-17-jre-headless \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+# TARGETARCH is filled in by Docker (amd64 on most PCs, arm64 on Apple Silicon)
+ARG TARGETARCH
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-${TARGETARCH}
+
+# ---- Python packages (always as the airflow user, never as root) ---------
+# Re-stating apache-airflow==2.9.3 stops pip from silently upgrading Airflow
+# while it resolves the new packages' dependencies.
+USER airflow
+RUN pip install --no-cache-dir \
+    "apache-airflow==2.9.3" \
+    "pyspark==3.5.1" \
+    "dbt-core~=1.8.0" \
+    "dbt-postgres~=1.8.0"
+
+# ---- S3A connector JARs, baked into PySpark's own jars/ folder ------------
+# Spark needs these two JARs to read/write s3a:// paths (MinIO or AWS S3).
+# Baking them in means no download at job start-up and no internet at run time.
+RUN JARS="$(python -c 'import os, pyspark; print(os.path.join(os.path.dirname(pyspark.__file__), "jars"))')" \
+    && curl -fsSL -o "$JARS/hadoop-aws-3.3.4.jar" \
+       https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
+    && curl -fsSL -o "$JARS/aws-java-sdk-bundle-1.12.262.jar" \
+       https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
+```
+
+Why each part matters:
+
+- **Java 17** — Spark runs on the Java Virtual Machine; PySpark is a Python remote control for it.
+- **Pinned versions** (`2.9.3`, `3.5.1`, `~=1.8.0`) — the same versions as the guided lab. Unpinned installs are how "it worked yesterday" happens.
+- **The two S3A JARs** — teach Spark to read/write `s3a://` paths. Baking them into the image means no download when a job starts.
+
+**Expected output:** none yet (the file is built in Step 7).
+
+✅ **Checkpoint:** `C:\DataEngineering\sk03\docker\Dockerfile` exists.
+
+### Step 5 — Write the warehouse bootstrap SQL (`sql\warehouse_init.sql`)
+
+Postgres runs every `.sql` file in `/docker-entrypoint-initdb.d/` **once**, when its data volume is first created. Ours creates the schemas, the staging table the pipeline loads into (Lab 07), and the read-only group dbt grants access to (Lab 08). Create `C:\DataEngineering\sk03\sql\warehouse_init.sql`:
+
+```sql
+-- SK-03 warehouse bootstrap. Runs ONCE, when the warehouse volume is first created.
+-- (Changed this file? Re-run it with:  docker exec -i warehouse psql -U dwh_user -d warehouse < sql\warehouse_init.sql)
+
+CREATE SCHEMA IF NOT EXISTS staging;     -- raw loads from the data lake (pipeline writes here)
+CREATE SCHEMA IF NOT EXISTS analytics;   -- dbt marts (analysts read here)
+
+-- Landing table for processed orders. One row per order line.
+-- Columns = the Spark job's clean output (Lab 04 / guided lab Step 1.4).
+CREATE TABLE IF NOT EXISTS staging.daily_orders (
+    order_id            TEXT,
+    customer_id         TEXT,
+    platform            TEXT,
+    order_date          TIMESTAMP,
+    product_id          TEXT,
+    product_name        TEXT,
+    category            TEXT,
+    quantity            INTEGER,
+    unit_price          DOUBLE PRECISION,
+    discount_pct        DOUBLE PRECISION,
+    shipping_cost       DOUBLE PRECISION,
+    tax_amount          DOUBLE PRECISION,
+    payment_method      TEXT,
+    shipping_country    TEXT,
+    shipping_state      TEXT,
+    shipping_city       TEXT,
+    is_returned         BOOLEAN,
+    gross_revenue       DOUBLE PRECISION,
+    discount_amount     DOUBLE PRECISION,
+    net_revenue         DOUBLE PRECISION,
+    total_amount        DOUBLE PRECISION,
+    order_year          INTEGER,
+    order_month         INTEGER,
+    order_day           INTEGER,
+    order_hour          INTEGER,
+    day_of_week         INTEGER,
+    is_weekend          BOOLEAN,
+    order_item_count    BIGINT,
+    order_total_revenue DOUBLE PRECISION,
+    is_high_value       BOOLEAN,
+    etl_processed_at    TIMESTAMP,
+    etl_process_date    DATE
+);
+
+-- Read-only group for analysts; dbt's post_hook GRANTs marts to it.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'analytics_readers') THEN
+        CREATE ROLE analytics_readers NOLOGIN;
+    END IF;
+END $$;
+GRANT USAGE ON SCHEMA analytics TO analytics_readers;
+```
+
+**Expected output:** none yet.
+
+✅ **Checkpoint:** the file exists and ends with the `GRANT USAGE ...` line.
+
+### Step 6 — Write the platform (`docker-compose.yml`)
+
+**Docker Compose** declares many containers — their images, ports, folders and passwords — in one YAML file and starts them with one command. This file **is** your data platform. Create `C:\DataEngineering\sk03\docker-compose.yml`:
 
 ```yaml
 # SK-03 local batch data platform
 # Start:  docker compose up -d
-# Stop:   docker compose down          (keeps data)
+# Stop:   docker compose stop          (keeps everything)
+# Remove: docker compose down          (keeps data volumes)
 # Reset:  docker compose down -v       (DELETES all data volumes)
 
 x-airflow-common: &airflow-common
   build: ./docker
+  image: sk03-airflow:2.9.3
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
     AIRFLOW__CORE__DEFAULT_TIMEZONE: utc
-    # MinIO credentials — in real production these come from a secrets manager,
-    # never from a compose file. See "Production Engineering Practices" below.
+    # Encrypts passwords stored in Airflow Connections. LOCAL LAB VALUE ONLY —
+    # in production this comes from a secrets manager, never a file in git.
+    AIRFLOW__CORE__FERNET_KEY: "iXv35_nnQa1h2LIZoCvO_QmRtEMiPgBQmE1_DBcprSE="
+    AIRFLOW__WEBSERVER__SECRET_KEY: "sk03-local-lab-only"
+    # MinIO credentials (S3 stand-in) — local lab values only
     MINIO_ENDPOINT: http://minio:9000
     MINIO_ACCESS_KEY: minioadmin
     MINIO_SECRET_KEY: minioadmin123
+    # Analytics warehouse (Postgres) — used by dbt and the load step
     WAREHOUSE_HOST: warehouse
     WAREHOUSE_PORT: "5432"
     WAREHOUSE_DB: warehouse
@@ -174,21 +255,20 @@ x-airflow-common: &airflow-common
     - ./dbt:/opt/airflow/dbt
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
-    - ./config:/opt/airflow/shared_config
   depends_on:
     airflow-db:
       condition: service_healthy
 
 services:
 
-  # ------------------------------------------------------------------
-  # MinIO — S3-compatible object storage. Simulates Amazon S3 locally.
+  # MinIO — S3-compatible object storage (local stand-in for Amazon S3).
   # API on 9000 (what code talks to), web console on 9001 (what YOU use).
-  # ------------------------------------------------------------------
+  # Image note: MinIO no longer publishes images on Docker Hub, and Bitnami moved
+  # its free images to "bitnamilegacy/*" (frozen: no more updates or patches).
+  # A frozen, pinned image is fine for a local lab — never for production.
   minio:
-    image: minio/minio:latest
+    image: bitnamilegacy/minio:2025.4.22
     container_name: minio
-    command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -196,17 +276,9 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
     volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - minio-data:/bitnami/minio/data
 
-  # ------------------------------------------------------------------
-  # Airflow's internal metadata database. Airflow stores DAG runs,
-  # task states, connections, and variables here. You never query it.
-  # ------------------------------------------------------------------
+  # Airflow's own metadata database (DAG runs, task states, connections).
   airflow-db:
     image: postgres:16
     container_name: airflow-db
@@ -222,11 +294,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # ------------------------------------------------------------------
-  # The analytics WAREHOUSE — where dbt builds models and analysts query.
-  # In production this would be Redshift/Snowflake/BigQuery.
-  # Exposed on host port 5433 so you can connect with any SQL client.
-  # ------------------------------------------------------------------
+  # The analytics WAREHOUSE (local stand-in for Amazon Redshift).
+  # Host port 5433 so it never clashes with a Postgres on 5432 (e.g. SK-02's).
+  # sql/warehouse_init.sql runs once, the first time the volume is created.
   warehouse:
     image: postgres:16
     container_name: warehouse
@@ -238,33 +308,28 @@ services:
       - "5433:5432"
     volumes:
       - warehouse-data:/var/lib/postgresql/data
+      - ./sql/warehouse_init.sql:/docker-entrypoint-initdb.d/01_warehouse_init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dwh_user -d warehouse"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ------------------------------------------------------------------
-  # Spark master — coordinates work. Web UI on host port 8081.
-  # ------------------------------------------------------------------
+  # Spark standalone cluster (master + 1 worker) — used to learn the cluster
+  # model and the Spark UI. Pipeline jobs run in local mode inside Airflow.
   spark-master:
-    image: bitnami/spark:3.5
+    image: bitnamilegacy/spark:3.5
     container_name: spark-master
     environment:
       SPARK_MODE: master
     ports:
-      - "8081:8080"   # Spark master web UI (8080 inside; 8081 on your machine
-                      # because Airflow's UI takes 8080)
-      - "7077:7077"   # where workers and jobs connect
+      - "8081:8080"   # Spark master UI (8081 on your PC; Airflow owns 8080)
+      - "7077:7077"
     volumes:
       - ./jobs:/opt/jobs
-      - ./data:/opt/data
 
-  # ------------------------------------------------------------------
-  # Spark worker — does the actual data processing.
-  # ------------------------------------------------------------------
   spark-worker:
-    image: bitnami/spark:3.5
+    image: bitnamilegacy/spark:3.5
     container_name: spark-worker
     environment:
       SPARK_MODE: worker
@@ -275,12 +340,8 @@ services:
       - spark-master
     volumes:
       - ./jobs:/opt/jobs
-      - ./data:/opt/data
 
-  # ------------------------------------------------------------------
-  # Airflow: one-time init (creates DB tables + admin user), then
-  # webserver (UI on 8080) and scheduler (runs your DAGs).
-  # ------------------------------------------------------------------
+  # Airflow: one-time init, then webserver (UI on 8080) and scheduler.
   airflow-init:
     <<: *airflow-common
     container_name: airflow-init
@@ -292,7 +353,7 @@ services:
         airflow users create \
           --username admin --password admin \
           --firstname Admin --lastname User \
-          --role Admin --email admin@example.com
+          --role Admin --email admin@example.com || true
     restart: "no"
 
   airflow-webserver:
@@ -302,7 +363,7 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -324,296 +385,173 @@ volumes:
   warehouse-data:
 ```
 
-**Things worth understanding in that file (read this — it pays off all module):**
+Read these four ideas carefully — they come up in every lab:
 
-- **`x-airflow-common` / `&airflow-common` / `<<:`** — YAML anchors. We define the Airflow configuration once and reuse it for init, webserver, and scheduler. Same principle as a function in code: don't repeat yourself.
-- **Service names are hostnames.** Inside the Docker network, containers reach each other by service name: Airflow talks to `http://minio:9000`, dbt talks to host `warehouse`. From **Windows**, you use `localhost` with the published port instead (e.g., `localhost:9001` for the MinIO console). Mixing these up is the #1 beginner error in this module.
-- **Volumes** (`./dags:/opt/airflow/dags`) mount your Windows folders into containers. Edit a DAG in VS Code on Windows → Airflow inside the container sees it within seconds. **Named volumes** (`minio-data:`) persist databases and buckets across restarts.
-- **Healthchecks + `depends_on: condition:`** — Airflow refuses to start until its database answers. This is real production thinking: never assume a dependency is up; check.
+- **Service names are hostnames.** Inside the Docker network, containers reach each other by service name: code in Airflow uses `http://minio:9000` and host `warehouse`. From **Windows** you use `localhost` and the *published* port (left side of `"5433:5432"`). Mixing these up is the #1 beginner error.
+- **Bind mounts** (`./jobs:/opt/airflow/jobs`) make a Windows folder appear inside the container. Save `jobs\etl_job.py` in VS Code → the container sees it immediately.
+- **Named volumes** (`minio-data:`) keep buckets and databases across restarts. `docker compose down -v` deletes them.
+- **Anchors** (`&airflow-common` / `<<: *airflow-common`) define the Airflow settings once and reuse them for init, webserver and scheduler.
 
-### 1.6 The custom Airflow image
+> **About the `bitnamilegacy/*` images.** MinIO stopped publishing its own images on Docker Hub, and Bitnami moved its free images to the `bitnamilegacy` namespace in 2025. Those images are **frozen**: they still download, but they receive no updates or security patches. We pin `bitnamilegacy/minio:2025.4.22` and `bitnamilegacy/spark:3.5` because they exist, need no extra configuration, and keep this lab reproducible. That is acceptable for a throw-away local lab; in production you would use a maintained image (or the real AWS service).
 
-The stock Airflow image doesn't include Java (needed by PySpark), PySpark itself, dbt, or the S3 client library. We extend it. Create `C:\projects\sk03-batch-etl\docker\Dockerfile`:
+**Expected output:** none yet.
 
-```dockerfile
-FROM apache/airflow:2.9.3-python3.11
+✅ **Checkpoint:** `C:\DataEngineering\sk03` contains `docker-compose.yml`, `docker\Dockerfile`, `sql\warehouse_init.sql`.
 
-# Java is required by PySpark (Spark runs on the JVM)
-USER root
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends openjdk-17-jre-headless \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-
-# Python packages must be installed as the airflow user, never as root
-USER airflow
-RUN pip install --no-cache-dir \
-    pyspark==3.5.1 \
-    dbt-postgres==1.8.2 \
-    boto3==1.34.131 \
-    apache-airflow-providers-amazon==8.24.0
-```
-
-**Why one image for Airflow + PySpark + dbt?** In large production systems, Spark jobs run on a dedicated cluster (EMR, Databricks, Kubernetes) and Airflow only *submits* them. Locally, we take a pragmatic, widely-used shortcut: Airflow tasks run `spark-submit` in local mode inside the Airflow container. You still get the standalone Spark cluster (master + worker) for Labs 02–03 so you learn the real cluster model and the Spark UI. Lab 05 explains this trade-off in depth.
-
-**Pin your versions.** Notice every package has an exact version (`2.9.3`, `3.5.1`, `1.8.2`). Unpinned versions are how "it worked yesterday" happens. If a newer stable version exists when you read this, these pinned versions still work together — use them for the module.
-
-### 1.7 First launch
-
-From `C:\projects\sk03-batch-etl` in PowerShell:
+### Step 7 — Build and start everything
 
 ```powershell
+cd C:\DataEngineering\sk03
 docker compose up -d --build
 ```
 
-- **What this does:** builds your custom Airflow image (first time: 5–10 minutes), downloads MinIO/Postgres/Spark images (first time: several GB), then starts everything in the background (`-d` = detached).
-- **Expected output:** build logs, then lines like `✔ Container minio  Started` for each service. `airflow-init` will show `Exited (0)` — **that is correct**; it runs once and stops.
-
-**Verify everything is healthy:**
+The first run builds the Airflow image and downloads the others (several GB, 10–30 minutes). Later starts take seconds.
 
 ```powershell
-docker compose ps
+docker compose ps -a
 ```
 
-Expected: `minio`, `airflow-db`, `warehouse`, `spark-master`, `spark-worker`, `airflow-webserver`, `airflow-scheduler` all `Up` (db/minio/warehouse/webserver showing `(healthy)`); `airflow-init` shows `Exited (0)`.
+**Expected output** (columns trimmed; your "CREATED/STATUS" times differ):
 
-Now open each UI in your browser and confirm you can log in:
+```
+NAME                IMAGE                           SERVICE             STATUS
+airflow-db          postgres:16                     airflow-db          Up (healthy)
+airflow-init        sk03-airflow:2.9.3              airflow-init        Exited (0)
+airflow-scheduler   sk03-airflow:2.9.3              airflow-scheduler   Up
+airflow-webserver   sk03-airflow:2.9.3              airflow-webserver   Up (healthy)
+minio               bitnamilegacy/minio:2025.4.22   minio               Up
+spark-master        bitnamilegacy/spark:3.5         spark-master        Up
+spark-worker        bitnamilegacy/spark:3.5         spark-worker        Up
+warehouse           postgres:16                     warehouse           Up (healthy)
+```
+
+`airflow-init` showing **Exited (0)** is correct — it creates Airflow's database tables and the `admin` user, then stops. The webserver can take 1–2 minutes to become `(healthy)`.
+
+✅ **Checkpoint:** seven services `Up`, `airflow-init` `Exited (0)`.
+
+### Step 8 — Open the three web UIs
 
 | Service | URL | Login | You should see |
 |---|---|---|---|
-| MinIO console | http://localhost:9001 | `minioadmin` / `minioadmin123` | Object Browser, "no buckets" |
-| Airflow | http://localhost:8080 | `admin` / `admin` | Empty DAG list |
-| Spark master UI | http://localhost:8081 | none | "Workers (1)" listed, status ALIVE |
+| MinIO console | http://localhost:9001 | `minioadmin` / `minioadmin123` | Object Browser, no buckets yet |
+| Airflow | http://localhost:8080 | `admin` / `admin` | "DAGs" page, empty list |
+| Spark master | http://localhost:8081 | none | "Alive Workers: 1" |
 
-**Verify the warehouse** (uses the Postgres client inside the container, so you don't need to install anything on Windows):
+**Expected output:** all three pages load and logins succeed.
 
-```powershell
-docker exec -it warehouse psql -U dwh_user -d warehouse -c "SELECT version();"
-```
+✅ **Checkpoint:** you logged in to MinIO and Airflow, and the Spark page shows one alive worker.
 
-Expected: a row starting `PostgreSQL 16...`.
+### Step 9 — Verify the tools inside the Airflow container
 
-**Verify PySpark + Java inside Airflow:**
+Every job in SK-03 runs **inside** the `airflow-scheduler` container (that's where Python, Spark, dbt and the env vars live). `docker exec -it <container> <command>` runs a command there.
 
 ```powershell
-docker exec -it airflow-scheduler python -c "import pyspark; print(pyspark.__version__)"
+docker exec -it airflow-scheduler python -c "import pyspark, boto3; print('pyspark', pyspark.__version__)"
+docker exec -it airflow-scheduler spark-submit --version
 docker exec -it airflow-scheduler dbt --version
+docker exec -it airflow-scheduler bash -c 'echo $MINIO_ENDPOINT $WAREHOUSE_HOST'
 ```
 
-Expected: `3.5.1`, then dbt Core `1.8.x` with the `postgres` plugin listed.
+(Single quotes matter: in double quotes PowerShell would try to expand `$MINIO_ENDPOINT` itself, find nothing, and pass an empty string.)
 
-### 1.8 Troubleshooting first launch
+**Expected output** (version banners abbreviated):
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `port is already allocated` on 8080 | Something else uses the port | Find it: `netstat -ano \| findstr :8080`, stop it, or change the left side of the mapping (e.g. `8085:8080`) and use that URL |
-| Webserver restarts forever | init failed | `docker compose logs airflow-init` — usually the DB wasn't healthy yet; `docker compose down` then `up -d` again |
-| Build fails at `apt-get` | Network/proxy | Retry off VPN; check Docker Desktop proxy settings |
-| Everything is slow / laptop fan screams | Not enough RAM allocated | Revisit `.wslconfig` (1.3); close browsers; on 8 GB machines run `docker compose stop spark-worker` when not doing Spark labs |
-| `docker compose` says "no configuration file" | Wrong folder | `cd C:\projects\sk03-batch-etl` first — compose reads the file from the current directory |
-| Changes to Dockerfile not taking effect | Cached image | `docker compose up -d --build` (the `--build` matters) |
+```
+pyspark 3.5.1
+...   version 3.5.1
+...
+Core:
+  - installed: 1.8.x
+Plugins:
+  - postgres: 1.8.x
+http://minio:9000 warehouse
+```
 
-### 1.9 Daily driving: start, stop, reset
+✅ **Checkpoint:** PySpark `3.5.1`, dbt Core `1.8.x` with the `postgres` plugin, and both env vars print.
+
+### Step 10 — Verify the warehouse bootstrap
 
 ```powershell
-docker compose up -d      # start (fast after first time)
-docker compose stop       # pause everything, keep all data — do this end of day
-docker compose down       # remove containers, KEEP data volumes
-docker compose down -v    # full reset: DELETES buckets, warehouse, Airflow history
-docker compose logs -f airflow-scheduler   # follow one service's logs (Ctrl+C to stop)
-```
-
-You will type these hundreds of times this module. `stop` at the end of each session; `up -d` at the start of the next.
-
----
-
-## 2. Business Context
-
-Why does a batch ETL engineer need this exact stack?
-
-Picture UrbanGear, the online retailer whose pipeline you will rebuild starting in Lab 01. Every night, order files land in object storage. Something must **process** them at scale (Spark), something must **decide when and in what order** processing happens, retry failures, and alert humans (Airflow), and something must **shape the clean data into tables analysts trust** (dbt). The files live in **S3** in production — and MinIO speaks S3's exact API, so every line of code you write against MinIO works unchanged against real S3 by swapping an endpoint URL.
-
-Who consumes the output? Analysts, finance teams, dashboards, ML models. What happens if the platform fails? Executives make decisions on stale numbers, finance closes the books wrong, and — as the archive of real incidents in this module shows — companies discover multi-million-dollar reporting gaps days late.
-
-And why Docker? Because in industry, **nobody installs Spark on their laptop by hand anymore**. Data platforms are containerized. Being fluent in `docker compose ps` and reading container logs is as fundamental to a data engineer in 2026 as knowing SQL.
-
----
-
-## 3. Concept Explanation
-
-**Containers vs. virtual machines.** A VM emulates an entire computer (its own OS kernel — heavy, slow to boot). A container shares the host's Linux kernel and isolates only the filesystem and processes — starts in seconds, uses megabytes. That is why we can run seven services on one laptop.
-
-**Object storage vs. filesystems.** MinIO/S3 store *objects* (a blob + a key like `raw/orders/date=2026-07-01/orders.csv`) in *buckets*. There are no real folders — the `/` in keys is a naming convention that tools render as folders. Objects are immutable: you overwrite whole objects, never edit bytes in place. This shapes how batch pipelines write data (Lab 03).
-
-**Why simulate S3 instead of using S3?** (a) Zero cost and zero risk of a surprise bill; (b) works offline; (c) identical API means all learning transfers; (d) you can destroy and rebuild in seconds. The one thing MinIO can't teach you is IAM permissions — that's SK-04's job.
-
-**Alternatives you'd hear about at work:** LocalStack (simulates many AWS services, heavier), Azurite (Azure Blob), plain shared folders (no S3 API, teaches nothing transferable). MinIO is itself used *in production* by many companies as on-prem object storage — it is not a toy.
-
-**The stack's division of labor** — memorize this sentence: *Spark computes, Airflow coordinates, dbt transforms-and-tests inside the warehouse, MinIO/S3 stores files, Postgres serves queries.*
-
-```mermaid
-flowchart LR
-    A[Source files] -->|land in| B[(MinIO<br/>raw bucket)]
-    B --> C[Spark job<br/>clean + validate]
-    C -->|Parquet| D[(MinIO<br/>processed bucket)]
-    D --> E[Load to warehouse]
-    E --> F[(Postgres<br/>warehouse)]
-    F --> G[dbt models + tests]
-    G --> H[Analysts / BI]
-    I[Airflow] -.orchestrates.-> C
-    I -.orchestrates.-> E
-    I -.orchestrates.-> G
-```
-
----
-
-## 4. Step-by-Step Implementation
-
-You already did the heavy lifting in section 1. This section is one guided smoke test that touches **every** component, so you know the whole platform works end-to-end before Lab 01.
-
-### Step 4.1 — Create a bucket and upload a file to MinIO
-
-1. Open http://localhost:9001, log in (`minioadmin` / `minioadmin123`).
-2. Click **Create Bucket** → name it `smoke-test` → Create.
-3. On Windows, create a tiny file:
-
-```powershell
-"id,name`n1,alpha`n2,beta" | Out-File -Encoding utf8 C:\projects\sk03-batch-etl\data\smoke.csv
-```
-
-4. In the MinIO console, open the `smoke-test` bucket → **Upload** → choose `smoke.csv`.
-
-**Verify:** the object browser shows `smoke.csv`, size ~30 B.
-**Common mistake:** `Out-File` without `-Encoding utf8` writes UTF-16 on Windows PowerShell 5.1, which Spark reads as garbage. Always pass `-Encoding utf8`.
-
-### Step 4.2 — Read that file from Spark
-
-Run a Spark shell **inside** the container, configured to talk to MinIO via the `s3a://` connector (the Hadoop library Spark uses for S3-compatible storage):
-
-```powershell
-docker exec -it spark-master spark-shell `
-  --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 `
-  --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 `
-  --conf spark.hadoop.fs.s3a.access.key=minioadmin `
-  --conf spark.hadoop.fs.s3a.secret.key=minioadmin123 `
-  --conf spark.hadoop.fs.s3a.path.style.access=true
-```
-
-- **Why these confs:** `endpoint` points s3a at MinIO instead of AWS; `path.style.access=true` is required because MinIO doesn't use AWS's bucket-as-subdomain URLs. You will see these five settings in every lab — Lab 02 wraps them in a helper so you stop typing them.
-- First run downloads the two JAR packages (~1 min).
-
-At the `scala>` prompt:
-
-```scala
-spark.read.option("header", "true").csv("s3a://smoke-test/smoke.csv").show()
+docker exec -it warehouse psql -U dwh_user -d warehouse -c "\dn"
+docker exec -it warehouse psql -U dwh_user -d warehouse -c "\dt staging.*"
 ```
 
 **Expected output:**
 
 ```
-+---+-----+
-| id| name|
-+---+-----+
-|  1|alpha|
-|  2| beta|
-+---+-----+
+      List of schemas
+   Name    |       Owner
+-----------+-------------------
+ analytics | dwh_user
+ public    | pg_database_owner
+ staging   | dwh_user
+(3 rows)
+
+             List of relations
+ Schema  |     Name     | Type  |  Owner
+---------+--------------+-------+----------
+ staging | daily_orders | table | dwh_user
+(1 row)
 ```
 
-Type `:quit` to exit.
+✅ **Checkpoint:** schemas `staging` and `analytics` exist, and `staging.daily_orders` is listed.
 
-**Troubleshooting:** `UnknownHostException: minio` → you ran the shell on Windows instead of inside the container (only containers resolve the name `minio`). `403 Forbidden` → credential typo. `NoSuchBucket` → bucket name typo.
-
-### Step 4.3 — Prove Airflow can run a task
-
-1. Create `C:\projects\sk03-batch-etl\dags\smoke_test_dag.py`:
-
-```python
-"""Lab 00 smoke test: proves the scheduler executes tasks and can reach MinIO."""
-from datetime import datetime
-from airflow import DAG
-from airflow.operators.bash import BashOperator
-
-with DAG(
-    dag_id="lab00_smoke_test",
-    start_date=datetime(2026, 1, 1),
-    schedule=None,          # manual trigger only
-    catchup=False,
-    tags=["lab00"],
-) as dag:
-    check_minio = BashOperator(
-        task_id="check_minio_reachable",
-        bash_command="curl -sf http://minio:9000/minio/health/live && echo MINIO_OK",
-    )
-```
-
-2. Wait up to 60 seconds, refresh http://localhost:8080 — `lab00_smoke_test` appears (the scheduler scans the `dags/` folder every ~30s).
-3. Click the DAG → press the **▶ Trigger** button (top right).
-4. Click the green square that appears → **Logs**.
-
-**Expected:** log ends with `MINIO_OK` and `Marking task as SUCCESS`. You just ran your first orchestrated task, and it proved container-to-container networking works.
-
-**Common mistakes:** DAG not appearing → Python syntax error; check `docker compose logs airflow-scheduler` for an import error, or the file was saved outside `dags\`. Task fails with `curl: command not found` → you edited the Dockerfile and removed curl inheritance; rebuild.
-
-### Step 4.4 — Prove dbt can reach the warehouse
+### Step 11 — Prove containers can talk to each other
 
 ```powershell
-docker exec -it airflow-scheduler bash -c "dbt debug --profiles-dir /opt/airflow/dbt || true"
-```
-
-Right now this **fails** with "Could not find profile" — expected, you haven't created a dbt project yet (Lab 06 does). What matters is that the `dbt` command runs. Now prove connectivity the direct way:
-
-```powershell
+docker exec -it airflow-scheduler curl -s -o /dev/null -w "minio HTTP %{http_code}\n" http://minio:9000/minio/health/live
 docker exec -it airflow-scheduler python -c "import psycopg2; psycopg2.connect(host='warehouse', dbname='warehouse', user='dwh_user', password='dwh_pass').close(); print('WAREHOUSE_OK')"
 ```
 
-**Expected:** `WAREHOUSE_OK`.
+**Expected output:**
 
-### Step 4.5 — Clean up the smoke test
+```
+minio HTTP 200
+WAREHOUSE_OK
+```
 
-Delete the `smoke-test` bucket in the MinIO console (bucket → Manage → Delete) and delete `dags\smoke_test_dag.py`. Keeping test artifacts around is how confusion breeds — a habit worth building on day one.
+Both commands ran **inside** a container and used **service names**. Try the first one with `localhost:9000` instead of `minio:9000` — it fails, because inside the container `localhost` is the container itself.
 
----
+✅ **Checkpoint:** `minio HTTP 200` and `WAREHOUSE_OK`.
 
-## 5. Production Engineering Practices
+### Step 12 — Learn the daily commands
 
-Even a setup lab carries production lessons. Three for today:
+```powershell
+docker compose up -d                       # start (fast after the first time)
+docker compose stop                        # pause everything, keep all data — end of day
+docker compose down                        # remove containers, KEEP data volumes
+docker compose down -v                     # full reset: DELETES buckets, warehouse, Airflow history
+docker compose logs -f airflow-scheduler   # follow one service's log (Ctrl+C to stop following)
+```
 
-**1. Infrastructure as code.** Your entire platform is two text files (`docker-compose.yml`, `Dockerfile`). You could email them to a teammate and they'd have an identical environment in ten minutes. That property — *environments are reproducible from version-controlled files* — is the foundation of everything in SK-04 (Terraform is this idea applied to AWS). **Failure story:** a team whose "staging" server was configured by hand over two years could never reproduce a production bug locally; every hotfix was tested in production. Don't be that team. Consider `git init` in your project folder right now.
+Run `docker compose stop`, then `docker compose up -d`, then `docker compose ps`.
 
-**2. Secrets don't belong in config files.** We put `minioadmin123` straight into the compose file because this is a throwaway local lab — and we flagged it with a comment. In production, credentials come from a secrets manager (AWS Secrets Manager, Vault) or at minimum environment files excluded from git. **Failure story:** uncountable real breaches started with AWS keys committed to a public GitHub repo; bots scan for them and start crypto-miners within minutes. Lab 05 introduces Airflow Connections as the proper home for credentials in DAGs.
+**Expected output:** the same table as Step 7.
 
-**3. Healthchecks and explicit dependencies.** Our compose file makes Airflow wait for a *healthy* database, not just a *started* container. Production systems fail most often at startup and during dependency outages; declaring "what must be true before I run" is the same thinking behind Airflow sensors (Lab 05). **Failure story:** a pipeline that "worked on the engineer's machine" failed every Monday in production because a database restarted Sunday nights and the app connected before it accepted connections — a one-line healthcheck fix, found after three weeks of Monday pages.
+✅ **Checkpoint:** you can stop and restart the platform without losing anything.
 
----
+## Troubleshooting
 
-## 6. Reflection
+| Symptom | Cause | Fix |
+|---|---|---|
+| `docker: command not found` / "cannot connect to the Docker daemon" | Docker Desktop not running, or old PowerShell window | Start Docker Desktop, wait for "Engine running", open a NEW PowerShell |
+| `port is already allocated` (8080, 5433, 9000...) | Another program uses the port (e.g. a Postgres on 5433) | `netstat -ano \| findstr :5433` to find it; stop it, or change only the left side of the mapping (`"5434:5432"`) and use the new port from Windows |
+| Build fails at `apt-get` or `curl ... maven` | Network / proxy / VPN | Retry off VPN; set the proxy in Docker Desktop → Settings → Resources → Proxies |
+| `pull access denied for minio/minio` | You copied an old compose file | Use `bitnamilegacy/minio:2025.4.22` exactly as in Step 6 |
+| `airflow-webserver` keeps restarting | `airflow-init` failed | `docker compose logs airflow-init`; then `docker compose down` and `docker compose up -d` |
+| `staging.daily_orders` missing in Step 10 | The volume already existed, so `warehouse_init.sql` never ran | `docker exec -i warehouse psql -U dwh_user -d warehouse < sql\warehouse_init.sql` |
+| Laptop very slow | Too little memory for Docker | Revisit `.wslconfig`; `docker compose stop spark-master spark-worker` when you aren't in Lab 02 |
+| Edits to the Dockerfile have no effect | Cached image | `docker compose up -d --build` |
+| Strange file-lock / permission errors | Project inside OneDrive | Move the project to `C:\DataEngineering\sk03` |
 
-**What you built:** a seven-container local data platform — object storage (MinIO), compute (Spark), orchestration (Airflow), warehouse (Postgres), transformation tooling (dbt) — from two version-controlled files, and smoke-tested every path through it.
+## Key takeaways
 
-**Why it matters:** every subsequent lab assumes this environment. More importantly, you now hold the mental model of the modern batch stack: *storage, compute, orchestration, and transformation are separate tools with clean seams*, which is exactly how real platforms — cloud or on-prem — are assembled.
+- The whole platform is three text files: `docker-compose.yml`, `docker\Dockerfile`, `sql\warehouse_init.sql`. Anyone can rebuild it identically — infrastructure as code.
+- Inside containers use service names (`minio:9000`, `warehouse:5432`); from Windows use `localhost` and the published port (`9001`, `8080`, `8081`, `5433`).
+- Every SK-03 job runs inside `airflow-scheduler` via `docker exec` — that is where Spark, dbt, and the credentials live.
+- Credentials sit in the compose file only because this is a local lab; production uses a secrets manager.
+- `docker compose ps` and `docker compose logs <service>` are always your first debugging moves.
 
-### Interview questions (with model answers)
+## Next
 
-1. **What's the difference between a Docker image and a container?** An image is an immutable packaged filesystem + startup command; a container is a running (or stopped) instance of an image. One image, many containers.
-2. **Why do containers start so much faster than VMs?** Containers share the host Linux kernel and isolate only processes/filesystem/network; VMs boot an entire guest OS.
-3. **What is object storage and how does it differ from a filesystem?** Flat key→blob storage with immutable objects accessed over HTTP APIs; no true directories, no in-place edits, no POSIX semantics. Optimized for huge scale and throughput, not low-latency small updates.
-4. **How can code written against MinIO run unchanged against Amazon S3?** MinIO implements the S3 API. Only the endpoint URL and credentials change; SDKs (boto3, Hadoop s3a) accept a custom endpoint parameter.
-5. **What does `s3a://` mean in a Spark path?** It selects the Hadoop S3A connector — the maintained Hadoop filesystem implementation for S3-compatible stores (its predecessors `s3://`/`s3n://` in Hadoop are obsolete).
-6. **In docker-compose, when do you use the service name vs. localhost?** Service names resolve only on the Docker network (container→container). From the host you use `localhost:<published port>`. A classic bug is a container trying to call `localhost:9000` and reaching itself.
-7. **Why does Airflow need its own database?** It persists all state there — DAG runs, task instances, retries, connections, variables. The scheduler and webserver are stateless; the metadata DB is the source of truth.
-8. **Why pin dependency versions in a Dockerfile?** Reproducibility. Unpinned builds can silently pull incompatible versions weeks later, producing "nothing changed but it broke" incidents.
-
-**Interview traps to watch for:**
-- "Is MinIO a database?" No — it's object storage; there is no query engine, no transactions over rows.
-- "Docker makes things faster, right?" Not inherently — it makes them *reproducible and isolated*. Performance is roughly native on Linux, slightly taxed via WSL2.
-- Interviewers love asking why `localhost` fails inside a container — be ready with the network-namespace answer from Q6.
-
-**Key takeaways:**
-- The whole platform is code: `docker-compose.yml` + `Dockerfile`.
-- Service names inside the network, `localhost:port` from Windows.
-- MinIO = S3 API locally; everything you write transfers to AWS.
-- `docker compose ps` and `docker compose logs <service>` are your first debugging moves — always.
-- Never skip verification. Every lab, every step.
-
-**Next:** [Lab 01 — Docker and MinIO Fundamentals](Lab_01_Docker_and_MinIO_Fundamentals.md), where you meet UrbanGear's data, script MinIO with Python (boto3), and learn the bucket layout the whole module builds on.
+[Lab 01 — MinIO Data Lake and Sample Data](Lab_01_MinIO_Data_Lake_and_Sample_Data.md): create UrbanGear's `urbangear-data-lake` bucket and generate the raw JSON order files the guided lab processes.
