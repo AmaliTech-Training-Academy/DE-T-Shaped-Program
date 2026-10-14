@@ -76,7 +76,24 @@ Work independently on the capstone project. This is where you prove your skills.
 |---------|-------------|
 | [Resources/](Resources/) | Curated learning materials organized by module |
 | [Labs/](Labs/) | Guided hands-on project (ShopStream) |
+| [Granular Labs/](Granular%20Labs/) | Step-by-step labs that build up to the guided lab |
 | [Capstone/](Project/) | Independent project for badge |
+
+---
+
+## Granular Labs
+
+New to Python data pipelines? Work through these step-by-step labs **before or alongside** the guided lab. They use the same ShopStream scenario, data, file names and project folder (`C:\DataEngineering\sk01`). By Lab 06 your `pipeline.py` *is* the guided lab's pipeline, with tests on top.
+
+| Lab | Topic | Guided lab coverage |
+|---|---|---|
+| [Lab 00](Granular%20Labs/Lab_00_Environment_Setup.md) | Environment setup: Python 3.12, venv, packages, VS Code | Prerequisites, project folder |
+| [Lab 01](Granular%20Labs/Lab_01_Python_Foundations_for_Data_Engineering.md) | Python foundations on ShopStream values | The Python the pipeline relies on |
+| [Lab 02](Granular%20Labs/Lab_02_Working_with_Files_and_Pandas.md) | Files and pandas: CSV, JSON, fixed-width, Excel | Parts 1–2 |
+| [Lab 03](Granular%20Labs/Lab_03_Data_Cleaning_and_Validation.md) | Cleaning, deduplication, quality checks | Parts 3–5 |
+| [Lab 04](Granular%20Labs/Lab_04_Building_a_Modular_ETL_Pipeline.md) | Orchestration, chart and delivery | Parts 7–8 |
+| [Lab 05](Granular%20Labs/Lab_05_Logging_Error_Handling_and_Idempotency.md) | Logging, errors, CRM API, secrets, idempotency | Step 1.1, Step 2.2, Part 6, Reflection Q4–Q5 |
+| [Lab 06](Granular%20Labs/Lab_06_Testing_and_Packaging_a_Production_Pipeline.md) | pytest tests and handover packaging | Tests for Parts 2–5 and 8 |
 
 ---
 

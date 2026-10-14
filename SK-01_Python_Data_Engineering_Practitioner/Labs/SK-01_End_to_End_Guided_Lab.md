@@ -49,9 +49,9 @@ ShopStream Customer Pipeline:
 │   └── Region mapping (15+ variants -> US / EU / APAC)
 │
 ├── 3. DEDUPLICATION LAYER
-│   ├── Pass 1: Exact email match
-│   ├── Pass 2: Phone match (for records not yet matched)
-│   └── Source priority merge (CRM > Website > ERP > Marketing)
+│   ├── Exact match on standardized email
+│   ├── Source priority merge (CRM > Website > ERP > Marketing)
+│   └── (Extension) a second pass on phone for records without a valid email
 │
 ├── 4. VALIDATION LAYER
 │   ├── 7 quality checks (completeness, uniqueness, format, range)
@@ -73,14 +73,16 @@ ShopStream Customer Pipeline:
 
 ## PREREQUISITES
 
-- Python 3.9+ with the following libraries installed:
+- Python 3.12 (3.11+ is fine) in a virtual environment, with **pandas 2.2 or newer** (this lab uses `include_groups=` and the `"ME"` month-end frequency, which need pandas 2.2+). If you completed the Granular Labs, Lab 00 already installed everything:
   ```
-  pip install pandas numpy matplotlib seaborn requests openpyxl pyarrow rapidfuzz
+  python -m pip install "pandas>=2.2,<3" numpy matplotlib seaborn requests openpyxl pyarrow
   ```
+  (The lab is tested on pandas 2.2 and 2.3; `<3` keeps you off pandas 3.x, which changes string handling.)
 - Optional (for the AI enrichment bonus step):
   ```
-  pip install anthropic
+  python -m pip install anthropic
   ```
+- Work in your project root (e.g. `C:\DataEngineering\sk01`) — **not** inside a OneDrive-synced folder, which can lock files while the pipeline writes them.
 
 ---
 
@@ -105,20 +107,21 @@ Run: python pipeline.py
 
 import pandas as pd
 import numpy as np
+import os
 import re
 import json
 import requests
 from datetime import datetime
 from pathlib import Path
 import logging
-import hashlib
 
 # ── Configure logging ──────────────────────────────────────────────────────────
+Path("logs").mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("pipeline.log"),
+        logging.FileHandler("logs/pipeline.log", encoding="utf-8"),  # utf-8: the report uses ✓/✗
         logging.StreamHandler()
     ]
 )
@@ -129,7 +132,7 @@ CONFIG = {
     "input_dir": Path("data/raw"),
     "output_dir": Path("data/processed"),
     "crm_api_url": "https://api.shopstream.example.com/v2/customers",
-    "crm_api_key": "sk-xxxx",          # Use environment variable in production
+    "crm_api_key": os.environ.get("CRM_API_KEY", ""),   # secret comes from the environment, never from code
     "valid_regions": ["US", "EU", "APAC"],
     "email_regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
     "quality_threshold": 0.95,         # 95% of records must pass each check
@@ -188,7 +191,7 @@ def generate_synthetic_data():
         "Last Name": [last_names[i] for i in np.random.randint(0, len(last_names), n)],
         "Phone": [phones_messy[i % len(phones_messy)] for i in range(n)],
         "Region": [regions_messy[i % len(regions_messy)] for i in range(n)],
-        "Registration Date": pd.date_range("2020-01-01", periods=n, freq="4H").strftime("%Y-%m-%d"),
+        "Registration Date": pd.date_range("2020-01-01", periods=n, freq="4h").strftime("%Y-%m-%d"),
         "OptOut": np.random.choice([0, 1], n, p=[0.85, 0.15]),
     })
     # Add test accounts (should be removed)
@@ -223,7 +226,7 @@ def generate_synthetic_data():
             "lifetime_value": round(np.random.uniform(50, 5000), 2),
         })
     crm_path = CONFIG["input_dir"] / "crm_export.json"
-    crm_path.write_text(json.dumps({"customers": crm_records}))
+    crm_path.write_text(json.dumps({"customers": crm_records}), encoding="utf-8")
     logger.info(f"Generated CRM JSON: {len(crm_records)} records")
 
     # --- SOURCE 3: ERP Fixed-Width ---
@@ -241,17 +244,32 @@ def generate_synthetic_data():
             f"{name:<50}"
             f"{email:<60}"
             f"{phone:<20}"
-            f"{region:<5}"
+            f"{region:<15}"
             f"{date:<10}"
             f"{status:<5}"
         )
         erp_lines.append(line)
-    (CONFIG["input_dir"] / "erp_customers.txt").write_text("\n".join(erp_lines))
+    (CONFIG["input_dir"] / "erp_customers.txt").write_text("\n".join(erp_lines), encoding="utf-8")
     logger.info(f"Generated ERP fixed-width: {len(erp_lines)} records")
+
+    # --- SOURCE 4: Marketing platform Excel (campaign engagement) ---
+    m = n // 4
+    marketing_df = pd.DataFrame({
+        "Email Address": np.random.choice(emails_pool, m),
+        "First Name": [first_names[i] for i in np.random.randint(0, len(first_names), m)],
+        "Last Name": [last_names[i] for i in np.random.randint(0, len(last_names), m)],
+        "Region": [regions_messy[i % len(regions_messy)] for i in range(m)],
+        "Emails Opened (90d)": np.random.randint(0, 40, m),
+        "Unsubscribed": np.random.choice(["Y", "N"], m, p=[0.1, 0.9]),
+    })
+    marketing_df.to_excel(CONFIG["input_dir"] / "marketing_engagement.xlsx",
+                          sheet_name="Engagement", index=False)
+    logger.info(f"Generated marketing Excel: {len(marketing_df)} records")
 
     logger.info("Synthetic data generation complete.")
 
-# Uncomment to generate data:
+# Generate the data once. The __main__ block at the end of the file (Part 8) also does this
+# automatically when data/raw/website_customers.csv is missing.
 # generate_synthetic_data()
 ```
 
@@ -338,7 +356,7 @@ def ingest_crm_json(filepath: Path) -> pd.DataFrame:
     """
     logger.info(f"Ingesting CRM JSON: {filepath}")
 
-    raw = json.loads(filepath.read_text())
+    raw = json.loads(filepath.read_text(encoding="utf-8"))
     df = pd.json_normalize(
         raw["customers"],
         sep="_",            # Flatten nested keys with underscore separator
@@ -395,6 +413,10 @@ def ingest_crm_api(api_url: str, api_key: str) -> pd.DataFrame:
             break
 
     df = pd.json_normalize(all_records, sep="_")
+    # Same column names and date type as ingest_crm_json(), so align_schema() keeps the names
+    df = df.rename(columns={"profile_first_name": "first_name", "profile_last_name": "last_name"})
+    if "registration_date" in df.columns:
+        df["registration_date"] = pd.to_datetime(df["registration_date"], errors="coerce")
     df["source"] = "crm"
     logger.info(f"  Ingested {len(df)} records from CRM API")
     return df
@@ -417,9 +439,9 @@ def ingest_erp_fixed_width(filepath: Path) -> pd.DataFrame:
         [10:60]  full_name
         [60:120] email
         [120:140] phone
-        [140:145] region_code
-        [145:155] registration_date (YYYY-MM-DD)
-        [155:160] status
+        [140:155] region_code
+        [155:165] registration_date (YYYY-MM-DD)
+        [165:170] status
 
     Args:
         filepath: Path to the fixed-width text file.
@@ -434,9 +456,9 @@ def ingest_erp_fixed_width(filepath: Path) -> pd.DataFrame:
         (10, 60),    # full_name
         (60, 120),   # email
         (120, 140),  # phone
-        (140, 145),  # region_code
-        (145, 155),  # registration_date
-        (155, 160),  # status
+        (140, 155),  # region_code
+        (155, 165),  # registration_date
+        (165, 170),  # status
     ]
     col_names = ["customer_id", "full_name", "email", "phone",
                  "region_code", "registration_date", "status"]
@@ -466,7 +488,47 @@ def ingest_erp_fixed_width(filepath: Path) -> pd.DataFrame:
     return df
 ```
 
-### Step 2.4: Combine All Sources
+### Step 2.4: Ingest the Marketing Platform Excel Export
+
+**WHY:** Marketing teams live in spreadsheets. Their export carries engagement metadata and an unsubscribe flag (`Y`/`N`) that must be translated into the same `opt_out` meaning the other sources use — otherwise a customer who unsubscribed in the marketing tool could still be emailed.
+
+**HOW:**
+
+```python
+def ingest_marketing_excel(filepath: Path) -> pd.DataFrame:
+    """
+    Ingest the marketing platform's campaign-engagement Excel export.
+
+    Args:
+        filepath: Path to the .xlsx file (data is on the "Engagement" sheet).
+
+    Returns:
+        DataFrame with snake_case column names, opt_out flag and source tag.
+    """
+    logger.info(f"Ingesting marketing Excel: {filepath}")
+
+    df = pd.read_excel(filepath, sheet_name="Engagement")   # needs openpyxl installed
+
+    # Same snake_case standardization as the website CSV
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(r"[^\w]", "_", regex=True)
+        .str.replace(r"_+", "_", regex=True)
+        .str.strip("_")
+    )
+    df = df.rename(columns={"email_address": "email"})
+
+    # "Y"/"N" unsubscribe flag -> 1/0 opt_out (same meaning as the other sources)
+    df["opt_out"] = df["unsubscribed"].map({"Y": 1, "N": 0})
+
+    df["source"] = "marketing"
+    logger.info(f"  Ingested {len(df)} records from marketing Excel")
+    return df
+```
+
+### Step 2.5: Combine All Sources
 
 **WHY:** Once ingested separately, we need to align schemas before concatenating. Schema mismatches (different column names for the same concept) are the most common cause of silent data corruption in multi-source pipelines.
 
@@ -486,7 +548,10 @@ def align_schema(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
     for col in STANDARD_SCHEMA:
         if col not in df.columns:
             df[col] = np.nan
-    return df[STANDARD_SCHEMA].copy()
+    # astype(object): every source arrives with the same (generic) column types, so pd.concat
+    # never has to guess a type from a column that is entirely empty in one source.
+    # Real types (dates, booleans) are set in the cleaning step.
+    return df[STANDARD_SCHEMA].astype(object)
 
 
 def ingest_all_sources() -> pd.DataFrame:
@@ -504,6 +569,9 @@ def ingest_all_sources() -> pd.DataFrame:
 
     erp_df = ingest_erp_fixed_width(CONFIG["input_dir"] / "erp_customers.txt")
     frames.append(align_schema(erp_df, "erp"))
+
+    marketing_df = ingest_marketing_excel(CONFIG["input_dir"] / "marketing_engagement.xlsx")
+    frames.append(align_schema(marketing_df, "marketing"))
 
     combined = pd.concat(frames, ignore_index=True)
     logger.info(f"Total records combined: {len(combined)}")
@@ -618,6 +686,9 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["phone"] = standardize_phone_numbers(df["phone"])
     df["region"] = standardize_regions(df["region"])
     df["registration_date"] = pd.to_datetime(df["registration_date"], errors="coerce")
+    # opt_out arrives as 0/1 (website, marketing), True/False (CRM) or missing (ERP):
+    # make it one boolean column (missing = not opted out) so it can be merged and saved to Parquet
+    df["opt_out"] = df["opt_out"].astype(float).fillna(0).astype(bool)
 
     invalid_emails = (~df["email_valid"]).sum()
     null_regions = df["region"].isna().sum()
@@ -656,6 +727,7 @@ def deduplicate_customers(df: pd.DataFrame) -> pd.DataFrame:
         Deduplicated DataFrame with provenance tracking.
     """
     logger.info("STEP 3: Deduplication")
+    df = df.copy()                     # never modify the caller's DataFrame
     initial_count = len(df)
 
     df["source_priority"] = df["source"].map(CONFIG["source_priority"]).fillna(99)
@@ -690,11 +762,12 @@ def deduplicate_customers(df: pd.DataFrame) -> pd.DataFrame:
     deduped = (
         valid_df
         .groupby("email", sort=False)
-        .apply(merge_group, include_groups=False)
-        .reset_index(drop=True)
+        .apply(merge_group, include_groups=False)   # include_groups=False: "email" is not passed in...
+        .reset_index()                              # ...so bring it back from the index as a column
     )
 
-    # Append invalid-email records (cannot be deduplicated by email)
+    # Append invalid-email records (cannot be deduplicated by email), with the same provenance columns
+    invalid_df = invalid_df.assign(sources=invalid_df["source"], source_count=1)
     result = pd.concat([deduped, invalid_df], ignore_index=True)
 
     removed = initial_count - len(result)
@@ -812,8 +885,6 @@ def run_quality_checks(df: pd.DataFrame) -> pd.DataFrame:
 **HOW:**
 
 ```python
-import anthropic  # pip install anthropic
-
 def infer_region_with_llm(df: pd.DataFrame) -> pd.DataFrame:
     """
     Use Claude to infer missing region values from available context.
@@ -825,6 +896,8 @@ def infer_region_with_llm(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with inferred regions filled in and a 'region_inferred' flag.
     """
+    import anthropic  # optional dependency (python -m pip install anthropic) — imported here so
+                      # the rest of the pipeline still runs when it is not installed
     client = anthropic.Anthropic()  # Uses ANTHROPIC_API_KEY env var
     null_region_mask = df["region"].isna()
     null_count = null_region_mask.sum()
@@ -916,6 +989,7 @@ def generate_eda_report(df: pd.DataFrame, output_dir: Path):
     """Generate a professional 6-chart EDA and quality visualization."""
     logger.info("STEP 5: Generating EDA visualization...")
 
+    sns.set_theme(style="whitegrid")   # seaborn styling for every matplotlib chart below
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     fig.suptitle("ShopStream Customer Data Quality Report", fontsize=16, fontweight="bold")
     colors = ["#2196F3", "#4CAF50", "#FF9800", "#F44336", "#9C27B0", "#00BCD4"]
@@ -926,7 +1000,8 @@ def generate_eda_report(df: pd.DataFrame, output_dir: Path):
     axes[0, 0].set_title("Customers by Region")
     axes[0, 0].set_ylabel("Count")
     for i, (r, c) in enumerate(region_counts.items()):
-        axes[0, 0].text(i, c + 50, f"{c:,}", ha="center", fontweight="bold", fontsize=9)
+        axes[0, 0].text(i, c + region_counts.max() * 0.01, f"{c:,}",   # label just above the bar
+                        ha="center", fontweight="bold", fontsize=9)
 
     # 2. Registration Trend
     monthly = df.dropna(subset=["registration_date"]).set_index("registration_date").resample("ME").size()
@@ -976,6 +1051,7 @@ def generate_eda_report(df: pd.DataFrame, output_dir: Path):
         axes[1, 2].set_title("Opt-Out Rate by Region")
         axes[1, 2].set_ylabel("Opt-Out Rate")
         axes[1, 2].axhline(y=0.2, color="red", linestyle="--", label="20% threshold")
+        axes[1, 2].legend(fontsize=8)
         for i, (region, rate) in enumerate(opt_out_rate.items()):
             axes[1, 2].text(i, rate + 0.005, f"{rate:.1%}", ha="center", fontsize=9)
 
@@ -1054,6 +1130,8 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
+    if not (CONFIG["input_dir"] / "website_customers.csv").exists():
+        generate_synthetic_data()      # first run only: create the 4 source files
     run_pipeline()
 ```
 
