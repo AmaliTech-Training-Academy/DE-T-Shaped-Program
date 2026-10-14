@@ -6,6 +6,8 @@
 
 Items marked **(Essential)** should be completed by all participants. Items marked **(Recommended)** deepen understanding. Items marked **(Advanced)** target participants pursuing project-ready mastery. All Microsoft documentation links are free.
 
+The hands-on practice for these modules is the [Granular Labs](../Granular%20Labs/) (Lab_00 to Lab_07), which build up to the [guided lab](../Labs/SK-07_End_to_End_Guided_Lab.md) step by step.
+
 ---
 
 ---
@@ -30,9 +32,17 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    - **Why:** Shortcuts are the core Fabric data-sharing mechanism. This covers all shortcut types (OneLake-to-OneLake, ADLS Gen2, S3, GCS), creation steps, and the read-only constraint. Essential for the Gold → Warehouse serving layer pattern.
    - **Time:** 25 min read
 
-4. **(Recommended)** [Fabric vs Azure Data Services — Decision Guide](https://learn.microsoft.com/en-us/fabric/get-started/fabric-vs-azure)
-   - **Why:** Provides the official Microsoft view on when to use Fabric vs keeping existing Azure services. Covers Fabric Pipelines vs ADF, Fabric Spark vs Databricks, and Fabric Warehouse vs Synapse. Essential for client conversations.
+4. **(Recommended)** [Data Factory in Fabric vs Azure Data Factory](https://learn.microsoft.com/en-us/fabric/data-factory/compare-fabric-data-factory-and-azure-data-factory)
+   - **Why:** The official comparison of Fabric pipelines with Azure Data Factory — what carries over, what's different (connections instead of linked services, no datasets), and what's new. Pair it with the [Fabric decision guide for choosing a data store](https://learn.microsoft.com/en-us/fabric/fundamentals/decision-guide-data-store) (Lakehouse vs Warehouse vs Eventhouse). Useful for client conversations about migrating existing Azure workloads.
    - **Time:** 20 min read
+
+5. **(Essential)** [Fabric Trial Capacity — Official Docs](https://learn.microsoft.com/en-us/fabric/fundamentals/fabric-trial)
+   - **Why:** What the free 60-day trial includes (F4 or F64 capacity, 1 TB OneLake, no Copilot), how to start or join one, how to check days remaining, and what happens to your items when it ends. Read before Lab_00.
+   - **Time:** 15 min read
+
+6. **(Recommended)** [Pause and Resume Your Capacity](https://learn.microsoft.com/en-us/fabric/enterprise/pause-resume)
+   - **Why:** Paid F-SKUs bill per hour while running. Pausing stops compute billing (OneLake storage is still billed). Know this before anyone gives you a paid capacity.
+   - **Time:** 10 min read
 
 #### Videos
 
@@ -149,10 +159,12 @@ Items marked **(Essential)** should be completed by all participants. Items mark
 
    BRONZE LAYER:
    □ What is the ingestion grain? (One file per day? One row per API response?)
-   □ What partition column will be used? (Usually _ingested_at cast to date)
+   □ What partition column will be used? (A real column such as _extract_date —
+     Delta can't partition by an expression like DATE(_ingested_at))
    □ Which metadata columns are needed? (_source_system, _ingested_at, _file_name)
    □ What is the retention policy? (90 days minimum for reprocessing)
-   □ Is the data append-only or can it be overwritten? (Bronze = always append)
+   □ Append-only across extracts? (Yes — but re-loading the SAME extract should
+     replace its partition with replaceWhere, so retries can't duplicate rows)
 
    SILVER LAYER:
    □ What is the business key for deduplication? (natural key from source)
@@ -174,8 +186,11 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    ```
    COMMON PIPELINE EXPRESSIONS (Dynamic Content):
    ─────────────────────────────────────────────────────────────────
-   Yesterday's date (default processDate):
-     @formatDateTime(addDays(utcNow(), -1), 'yyyy-MM-dd')
+   Yesterday's date (parameter defaults must be literals, so default the
+   parameter to "" and compute the run date in a Set variable activity):
+     @if(empty(pipeline().parameters.processDate),
+         formatDateTime(addDays(utcNow(), -1), 'yyyy-MM-dd'),
+         pipeline().parameters.processDate)
 
    Dynamic file path with date:
      @concat('exports/orders_', pipeline().parameters.processDate, '.csv')
@@ -189,8 +204,9 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    Current pipeline name:
      @pipeline().Pipeline
 
-   Pass parameter to Notebook:
-     Set "process_date" → @pipeline().parameters.processDate
+   Pass parameter to Notebook (Base parameters; the notebook needs a
+   cell marked as its parameter cell):
+     Set "process_date" → @variables('runDate')
 
    Build Teams alert body:
      @concat('Pipeline FAILED\nName: ', pipeline().Pipeline,
@@ -214,8 +230,8 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    - **Why:** The reference for all PySpark DataFrame operations used in Bronze-to-Silver notebooks. Bookmark the functions module — withColumn, filter, groupBy, join, dropDuplicates, and window functions are the most-used operations.
    - **Time:** Reference — use as needed
 
-2. **(Recommended)** [notebookutils API in Microsoft Fabric](https://learn.microsoft.com/en-us/fabric/data-engineering/notebook-utilities)
-   - **Why:** The Fabric-specific utilities API — widgets (for receiving pipeline parameters), notebook exit (for returning output to the pipeline), file system operations (for manipulating OneLake files), and secrets (for accessing Key Vault). The `dbutils.widgets.get()` pattern for parameters is critical.
+2. **(Recommended)** [NotebookUtils (former MSSparkUtils) in Microsoft Fabric](https://learn.microsoft.com/en-us/fabric/data-engineering/notebook-utilities)
+   - **Why:** The Fabric-specific utilities API — `notebookutils.notebook.exit()` (returning output to the pipeline), file system operations (`notebookutils.fs` for OneLake files), and credentials (Key Vault secrets). Note that Fabric has no `dbutils`: pipeline parameters arrive through a notebook **parameter cell**, not widgets.
    - **Time:** 20 min read
 
 ---
@@ -252,7 +268,7 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    - **Why:** The definitive explanation of DirectLake mode — how it works architecturally, the row limits per SKU, when fallback to DirectQuery occurs, and how to set up a DirectLake semantic model. Required for the Power BI integration module.
    - **Time:** 20 min read
 
-3. **(Recommended)** [Incremental Refresh for Dataflows Gen2](https://learn.microsoft.com/en-us/fabric/data-factory/dataflows-gen2-incremental-refresh)
+3. **(Recommended)** [Incremental Refresh for Dataflows Gen2](https://learn.microsoft.com/en-us/fabric/data-factory/dataflow-gen2-incremental-refresh)
    - **Why:** Step-by-step instructions for configuring RangeStart/RangeEnd parameters, setting the refresh policy, and verifying that incremental refresh is working. The exact parameter names (case-sensitive) and folding requirement are covered.
    - **Time:** 20 min read
 
@@ -351,6 +367,14 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    ✗ bin() without order → chart x-axis is unordered
      Fix: add | order by timestamp asc after bin()
 
+   ✗ Current-state query (arg_max per entity) with a short window
+     Fix: look back further than the longest gap between two events for
+          one entity, or keep a latest-state materialized view.
+          Time-bound the EVENTS you count, not the STATE you derive.
+
+   ✗ next()/prev() over a list sorted by entity without checking the entity
+     Fix: | extend next_id = next(entity_id) ... | where next_id == entity_id
+
    ✗ count() when you need distinct count
      Fix: dcount(column) for approximate distinct count (HyperLogLog),
           dcountif(column, condition) for conditional distinct count
@@ -370,7 +394,7 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    - **Why:** The new (2024) OneLake item-level security model — apply read/write permissions at the folder or table level within a Lakehouse without granting full workspace access. Essential for the "analysts can see Gold but not Bronze/Silver" requirement.
    - **Time:** 20 min read
 
-3. **(Recommended)** [Microsoft Purview Integration with Fabric](https://learn.microsoft.com/en-us/fabric/governance/microsoft-purview-fabric-overview)
+3. **(Recommended)** [Microsoft Purview Integration with Fabric](https://learn.microsoft.com/en-us/fabric/governance/microsoft-purview-fabric)
    - **Why:** How sensitivity labels, data lineage, and data classification work between Microsoft Purview and Fabric. The lineage and Impact Analysis features used in Module D.3 are covered here.
    - **Time:** 20 min read
 
@@ -397,7 +421,7 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    Source table: [lakehouse_name].[table_name]
    Source schema:
      [column_name]: [type]  // one per line
-   Filter: read only rows where _ingested_at cast to date = process_date parameter
+   Filter: read only rows where _extract_date = process_date parameter
 
    Target table: [silver_lakehouse_name].[table_name]
    Target schema: [same or different]
@@ -410,9 +434,9 @@ Items marked **(Essential)** should be completed by all participants. Items mark
      4. Derive column [name] = [formula]
 
    Notebook must:
-   - Receive process_date as a dbutils widget parameter
+   - Receive process_date through a parameter cell (Fabric has no dbutils)
    - Log row counts (raw, clean, rejected) to [log_table]
-   - Exit with JSON summary using dbutils.notebook.exit()
+   - Exit with JSON summary using notebookutils.notebook.exit()
 
    ─────────────────────────────────────────────────────────────────
    TEMPLATE 2: Generate a KQL Query
@@ -458,8 +482,9 @@ Items marked **(Essential)** should be completed by all participants. Items mark
    ```
    ANTI-PATTERN                    PROBLEM                         FIX
    ──────────────────────────────────────────────────────────────────────────
-   Bronze overwrite                Destroys historical data for     Always APPEND to Bronze
-                                   reprocessing                     tables. Never overwrite.
+   Bronze full overwrite           Destroys historical data for     Append new extracts; re-load
+                                   reprocessing                     an extract with replaceWhere
+                                                                    on its own partition only
 
    MERGE without partition filter  Full table scan on every MERGE   Add partition column to
                                    → slow as table grows             MERGE condition

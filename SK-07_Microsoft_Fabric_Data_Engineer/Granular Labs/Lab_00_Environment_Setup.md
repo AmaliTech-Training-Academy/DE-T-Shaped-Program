@@ -1,482 +1,468 @@
-# Lab 00 — Environment Setup: Your Microsoft Fabric Trial Workspace
+# Lab 00 — Environment Setup: Fabric Trial, MedVista Workspaces and Sample Data
 
 > **Module:** SK-07 Microsoft Fabric Data Engineer
-> **Time estimate:** 2–3 hours (most of it is reading and clicking, not typing)
-> **Cost:** $0 — everything in this module runs on the free 60-day Fabric trial
-> **What you'll have at the end:** a working Fabric trial, a workspace named `sk07-fabric-training`, a local data folder at `C:\FabricLabs\data`, and the confidence to find your way around the Fabric UI.
+> **Goal:** Start a Microsoft Fabric trial, create the two MedVista workspaces, set up `C:\DataEngineering\sk07`, and generate the three days of MedVista source data that every later lab uses.
+> **Time:** 2–3 hours | **Difficulty:** Beginner | **Prerequisites:** A Microsoft Entra work or school account; Windows with PowerShell; Python 3.12 (3.11+ is fine)
+> **Guided lab coverage:** "Before you start: account, capacity and cost", Part 1 Steps 1.1 (workspaces) and 1.2 (sample data)
+> **Cost:** $0 on the Fabric trial. Read Section 3.3 before you create anything — it explains where Fabric can cost money and how to avoid it.
 
 ---
 
-## Before We Start: What Is Microsoft Fabric?
+## Learning objectives
 
-Here is the one-paragraph elevator pitch, and then we will unpack every word of it over the next few labs.
+By the end of this lab you can:
 
-**Microsoft Fabric is an all-in-one, cloud-based analytics platform delivered as Software-as-a-Service (SaaS).** Instead of stitching together five or six separate Azure services — one for storing data, one for moving it, one for transforming it with Spark, one for SQL warehousing, one for dashboards — Fabric bundles all of those capabilities into a single product with a single login, a single storage layer (called **OneLake**), and a single bill (called a **capacity**). You open a browser, sign in at `app.fabric.microsoft.com`, and everything a data engineering team needs is already wired together. That is the pitch: *less plumbing, more engineering*.
-
-Don't worry if terms like "OneLake" and "capacity" are fuzzy right now. Defining them properly is literally the job of this lab and the next one.
-
-### Why does this lab exist?
-
-Every other lab in SK-07 assumes you have:
-
-1. A working Microsoft Fabric trial.
-2. A workspace called **`sk07-fabric-training`** assigned to that trial.
-3. A local folder **`C:\FabricLabs\data`** where you will create small CSV files for our fictional client, **FreshCart** (an online grocery startup — you'll meet them properly in Section 2).
-
-This lab does the heavy lifting once so that every later lab can start with a two-minute verification instead of a two-hour setup. If something goes wrong later in the module, come back to the **Troubleshooting** section at the end of this lab — it is the longest troubleshooting section in the whole module, on purpose.
+- Explain what Microsoft Fabric is, and what a **capacity**, a **capacity unit (CU)**, a **workspace** and an **item** are.
+- Start (or join) a Fabric trial and check how many days are left.
+- Create workspaces and assign them to the trial capacity.
+- Explain the cost model of the trial and of paid F-SKUs, and the three habits that keep both under control.
+- Generate the seeded MedVista source extracts and name the data-quality problems hidden in them.
 
 ---
 
-## Section 1: Environment Setup
+## 1. Environment Setup
 
-### 1.1 What you need before anything else
+### 1.1 What you need
 
-| Requirement | Details | Why |
+| Item | Why | Check |
 |---|---|---|
-| **A work or school Microsoft account** | An account in Microsoft Entra ID (formerly Azure Active Directory), e.g. `you@yourcompany.com` or `you@yourtraining.org` | Fabric trials are only available to **organizational** accounts. Personal accounts (`@outlook.com`, `@gmail.com`, `@hotmail.com`) **cannot** sign up. More on this below. |
-| **A modern browser** | Microsoft Edge or Google Chrome, latest stable version. Firefox and Safari mostly work but Microsoft only fully supports Edge/Chrome. | Fabric is entirely browser-based. There is nothing to install to use Fabric itself. |
-| **Windows 11 PC** | Any spec is fine — the heavy compute happens in Microsoft's cloud, not on your machine | You only need a browser and a text editor locally. |
-| **No Azure subscription** | Really — none. No credit card either. | The Fabric **trial** provides its own compute capacity for 60 days. This is different from most cloud trials, which is why we can run this whole module for free. |
-| **(Optional) Power BI Desktop** | Free Windows app | Only used at the very end of the module for report authoring. macOS users skip it and use the browser instead. |
+| Work or school account (Microsoft Entra ID) | Fabric doesn't accept personal Microsoft accounts (outlook.com, hotmail.com, gmail.com) | Sign in at [app.fabric.microsoft.com](https://app.fabric.microsoft.com) |
+| A browser (Edge or Chrome) | Fabric is SaaS — everything except the two Python scripts runs in the browser | — |
+| Python 3.12 | Runs the data generator now and the bed-event simulator in Lab_07 | `py -3.12 --version` or `python --version` |
+| PowerShell 5.1 or 7 | All local commands in SK-07 are PowerShell | `$PSVersionTable.PSVersion` |
 
-Let's define the first piece of jargon before it trips you up:
+### 1.2 Folder layout
 
-> **Microsoft Entra ID** is Microsoft's cloud identity system — the directory where organizations keep their user accounts. When you log into anything Microsoft with a company or school email address, Entra ID is what checks your password. A **tenant** is one organization's private slice of Entra ID: your company's tenant contains your company's users, and nobody else's. Fabric trials, workspaces, and data all live *inside a tenant*.
+Everything local for SK-07 lives under one root. Avoid OneDrive-synced folders (Desktop, Documents): sync clients lock files while you work.
 
-### 1.2 "But I only have a personal account" — your options
+```
+C:\DataEngineering\sk07\
+├── .venv\                        Python virtual environment
+├── generate_medvista_data.py     this lab
+├── bed_event_simulator.py        Lab_07
+└── data\source_drops\            generated CSVs (uploaded to OneLake in Lab_01)
+    ├── epic\        encounters_2026-03-17.csv ...
+    ├── workday\     schedules_2026-03-17.csv ...
+    └── sap\         supply_orders_2026-03-17.csv ...
+```
 
-This is the single most common blocker for beginners, so let's handle it head-on. If your only email is `something@gmail.com` or `something@outlook.com`, the Fabric signup page will reject you with *"You can't sign up with a personal account. Use your work or school account instead."*
+---
 
-Your realistic options, in order of preference:
+## 2. Business Context
 
-**Option A — Use an account provided by your employer or training program (recommended).**
-If you're reading this as part of a training cohort (for example, an `@amalitechtraining.org` or company account), that account is already an Entra ID work account — use it. If you're at a company, ask your IT team whether Fabric trials are enabled in your tenant (some admins disable self-service trials; see Troubleshooting item T2).
+### The problem this lab solves
 
-**Option B — Create your own brand-new Entra ID tenant (free, ~20 minutes, slightly fiddly).**
-You can be your own one-person "organization." Microsoft lets anyone create a free Entra ID tenant:
+MedVista Health runs 12 hospitals. Their patient encounters live in Epic, staff schedules in Workday, supply orders in SAP, and bed status in a home-grown system. Nobody can join these together, so CMS readmission reports are late, beds are tracked on whiteboards, and nobody can explain a 23% rise in supply costs.
 
-1. Go to `https://azure.microsoft.com/free` OR directly to the Entra admin center at `https://entra.microsoft.com` and sign in with your personal Microsoft account.
-2. In the Entra admin center, go to **Identity → Overview → Manage tenants → Create**.
-3. Choose **Microsoft Entra ID** (not B2C), give the organization a name (anything, e.g. `FreshCartLab`), and a domain like `freshcartlab.onmicrosoft.com`.
-4. Once the tenant exists, create a **new user** inside it (Identity → Users → New user), e.g. `student@freshcartlab.onmicrosoft.com`, and set a password.
-5. That new `...onmicrosoft.com` account **is** a work/school account. Use it to sign up for Fabric in step 1.3.
+Your job across SK-07 is to build the platform described in the [guided lab](../Labs/SK-07_End_to_End_Guided_Lab.md): Bronze/Silver/Gold lakehouses, a daily pipeline, a T-SQL Warehouse for analysts, and a real-time bed-occupancy view. This lab gets the ground ready: a Fabric capacity to run on, two workspaces to build in, and realistic source data to build with.
 
-> ⚠️ **Heads-up about the "M365 Developer Program":** older tutorials (and older versions of this course) told you to join the free Microsoft 365 Developer Program to get a sandbox tenant with 25 users. **That program has been deprecated/restricted** — new sign-ups without a paid Visual Studio subscription are no longer accepted. If a blog post or video tells you to use it, that advice is out of date. Use Option A or B instead.
+### Why environment setup matters in industry
 
-**Option C — Ask your training provider for a shared tenant.** Some bootcamps provision a tenant with student accounts. If that's you, you likely already have credentials — check your onboarding email.
+On a real engagement the first week is often spent here: getting a capacity approved, agreeing workspace names and boundaries, and getting a representative extract of source data. Mistakes made now (wrong region, one workspace for everything, no cost guardrails) are expensive to undo later — moving a workspace with Fabric items to another region means deleting the items first.
 
-Whichever option you choose, the end state is the same: **you can sign into `app.fabric.microsoft.com` with a work/school account.** Everything after this point is identical for everyone.
+### Who consumes the output of this lab?
 
-### 1.3 Signing up for the Fabric trial — step by step
+Every later lab. Lab_01 uploads the CSVs you generate here; Labs 03–04 have expected row counts that only match if your data matches; Lab_06 puts the Warehouse in `medvista-analytics`.
 
-**Why a trial, and what do you get?** The Fabric trial gives you **60 days** of a trial capacity roughly equivalent to an **F64** capacity (we'll explain what F64 means in Section 3 — for now: it's a generous amount of cloud compute, more than enough for this whole module) plus **1 TB** of OneLake storage. No credit card, no Azure subscription, and when the 60 days end nothing is charged — your items just become read-only until you attach a paid capacity.
+---
 
-**Step 1 — Open the Fabric portal.**
+## 3. Concept Explanation
 
-- **What to do:** In Edge or Chrome, go to **`https://app.fabric.microsoft.com`** and sign in with your work/school account.
-- **Why:** This URL is the front door to all of Fabric. (You may notice it looks a lot like the Power BI portal at `app.powerbi.com` — that's because Power BI is one of the workloads *inside* Fabric; they share the same portal.)
-- **Expected output:** After signing in you land on the **Fabric home page** — a page with a left navigation bar (Home, Browse, OneLake, Workspaces, ...), a "Create" area, and possibly some getting-started cards. If you've never used Power BI, the page may be nearly empty. That's fine.
-- **Verification:** The URL bar shows `app.fabric.microsoft.com` (it may redirect to `app.powerbi.com` — same thing) and the top-right corner shows your initials/profile picture. Click it and confirm the account shown is your **work/school** account, not a personal one.
-- **Common mistake:** Being signed into the browser with a personal Microsoft account. The portal will silently use whatever account the browser has cached. **Fix:** use an InPrivate/Incognito window, or click your profile picture → **Sign out**, then sign in with the correct account.
-- **Troubleshooting:** "You need a work or school account" error → see Troubleshooting T1. Blank white page → try a different browser or disable aggressive ad-blockers (Fabric's portal is JavaScript-heavy).
+### 3.1 Fabric in one paragraph
 
-**Step 2 — Start the trial.**
+**Microsoft Fabric** is a software-as-a-service analytics platform. Instead of provisioning separate services for storage, data movement, Spark, SQL warehousing, real-time analytics and BI, you get them as **experiences** inside one product, sharing one storage layer (**OneLake**) and one pool of compute (a **capacity**). You sign in, create items in a workspace, and Fabric runs them.
 
-- **What to do:** Click your **profile picture / account manager** in the top-right corner. In the panel that opens, look for a button that says **"Start trial"** or **"Free trial"**. Click it. A dialog appears — **"Activate your 60-day free Fabric trial capacity"** — click **Activate** (or **Start trial**). You may be asked to confirm a phone number or just to click through.
-- **Why:** Signing in gives you a *seat* in Fabric, but creating anything requires **capacity** (compute). The trial button provisions a personal **Trial capacity** for you.
-- **Expected output:** A confirmation like *"Successfully upgraded to a free trial"*, and the account panel now shows **"Trial status: XX days left"**.
-- **Verification:** Click your profile picture again — you should see **"Free trial: 60 days left"** (or 59, depending on timing). If you can see that countdown, you have capacity. 🎉
-- **Common mistakes:**
-  - Looking for the trial button on the home page instead of in the **account manager panel** (profile picture, top right). It lives in the panel.
-  - Expecting an email confirmation — there isn't one. The countdown in the panel is your proof.
-- **Troubleshooting:** No "Start trial" button at all → Troubleshooting T2 (your tenant admin has disabled trials, or trials aren't available in your region). Button greyed out → T2 as well.
+### 3.2 The vocabulary you need today
 
-**Step 3 — Confirm Fabric is enabled (not just Power BI).**
+| Term | Meaning | MedVista example |
+|---|---|---|
+| **Tenant** | Your organisation's Microsoft Entra directory | `yourcompany.onmicrosoft.com` |
+| **Capacity** | A pool of compute you (or your company) pay for, sized as an F-SKU: F2, F4 … F2048 | The trial capacity |
+| **Capacity unit (CU)** | The unit of capacity size. F4 = 4 CUs, F64 = 64 CUs. Every job (Spark, SQL, pipeline, KQL) consumes CU-seconds | A notebook run consumes CUs while its Spark session is alive |
+| **Workspace** | A folder of items with its own access control, assigned to one capacity | `medvista-data-engineering` |
+| **Item** | Anything you create: lakehouse, notebook, pipeline, warehouse, eventstream, report | `medvista_bronze` |
+| **OneLake** | The single data lake under every workspace. Lakehouse tables are Delta Lake files in OneLake | Lab_01 |
 
-- **What to do:** In the bottom-left corner of the portal you'll see an **experience switcher** — an icon labeled with the current workload (it might say **Power BI** or **Fabric**). Click it.
-- **Why:** This switcher is how you move between Fabric's *experiences* (Data Engineering, Data Factory, Data Warehouse, Power BI, etc. — Lab_01 tours them all). If Fabric were disabled in your tenant, you would only see Power BI here.
-- **Expected output:** A menu (or full-screen picker) listing multiple experiences: **Fabric / Data Engineering / Data Factory / Data Warehouse / Real-Time Intelligence / Data Science / Power BI** (names and grouping shift slightly as Microsoft updates the UI — what matters is that you see *more than just Power BI*).
-- **Verification:** You can select **Data Engineering** and the portal's "Create/New" options change to show items like *Lakehouse*, *Notebook*, *Spark Job Definition*.
-- **Common mistake:** Panicking because your list of experiences looks slightly different from a screenshot in a video. Microsoft renames and regroups these regularly (e.g., "Synapse Data Engineering" became just "Data Engineering"; "Real-Time Analytics" became "Real-Time Intelligence"). Match on the *concepts*, not the exact labels.
-- **Troubleshooting:** Only Power BI appears → Fabric is disabled at the tenant level → Troubleshooting T3.
+**Why two workspaces?** Access is granted per workspace. Engineers need the raw (PHI-containing) Bronze data; analysts should only ever see curated Gold data. Putting the Warehouse in `medvista-analytics` means analysts get a role there and nowhere else (Lab_06).
 
-### 1.4 Create the module workspace: `sk07-fabric-training`
+### 3.3 Cost: what's free, what isn't, and how to stay safe
 
-Before creating it, one definition:
+**The trial.** A Fabric trial gives you a capacity of 4 or 64 CUs for **60 days**, free, with up to 1 TB of OneLake storage. Copilot and AI features aren't included (SK-07 doesn't need them). When it ends, workspaces drop back to Power BI Pro, Fabric items become unusable, and content is kept for 7 days in case you move the workspace to a paid capacity.
 
-> A **workspace** is Fabric's container for related items — think of it as a project folder in the cloud. Everything you build (lakehouses, notebooks, pipelines, reports) lives inside exactly one workspace. Workspaces are also where you control *who* can see and edit things, and *which capacity* pays for the compute.
+**What "free" doesn't protect you from: throttling.** A capacity has a fixed size. Fabric lets short jobs burst above it and smooths usage over time, but if you keep it busy (Spark sessions left open, a pipeline on a tight schedule, a stream running all night) it starts delaying and then rejecting work — for you and anyone sharing your trial.
 
-**Step 4 — Create the workspace.**
+**Paid capacity (if your organisation gives you one).** Pay-as-you-go F-SKUs bill **per hour while the capacity is running**, busy or idle. An F2 is roughly US$0.36 per hour, about US$263 per month if never paused, in US regions at the time of writing — check the [Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/?service=microsoft-fabric) for your region. **Pausing** the capacity in the Azure portal stops compute billing; OneLake storage (a few MB for this module) is still billed.
 
-- **What to do:**
-  1. In the left navigation bar, click **Workspaces**.
-  2. Click **+ New workspace** at the bottom of the flyout.
-  3. **Name:** type exactly **`sk07-fabric-training`** (lowercase, hyphens — every later lab refers to this exact name).
-  4. Expand the **Advanced** section.
-  5. Under **License mode / Capacity**, select **Trial** (it may appear as *"Trial capacity"* or *"Fabric trial"* with a radio button).
-  6. Click **Apply**.
-- **Why:** The name matters because Labs 01–06 and the project all say "open `sk07-fabric-training`" — using the exact name keeps you and the instructions in sync. The **Trial** license mode matters because a workspace without Fabric capacity can only hold Power BI items; lakehouses and notebooks would be greyed out or fail to create.
-- **Expected output:** The portal navigates into your new, empty workspace. The header shows `sk07-fabric-training` and, next to or under the name, a small diamond icon (the trial capacity badge) — hovering it says something like *"Trial"*.
-- **Verification:** Click **Workspace settings** (gear icon or `...` menu inside the workspace) → **License info** (or **Premium/License** tab). It should read **License mode: Trial**. If it says *Pro* or *Shared*, the workspace is NOT on Fabric capacity — go back and change it (you can change license mode in these same settings after creation; you don't need to delete the workspace).
-- **Common mistakes:**
-  - Typos: `sk07_fabric_training` (underscores) or `SK07-Fabric-Training` (capitals). Workspace names are display names so capitals won't break anything technically, but consistency saves confusion — use lowercase with hyphens as specified.
-  - Skipping the **Advanced** section, leaving license mode at the default **Pro**. Symptoms show up later: "Lakehouse" missing from the New-item menu, or an error like *"This item can't be created in a Pro workspace."*
-  - Creating items in **"My workspace"** (your personal default workspace) instead of `sk07-fabric-training`. My workspace works for scratch experiments but can't be shared and doesn't match the labs — always double-check the workspace name in the header before creating anything.
-- **Troubleshooting:** "Trial" not offered as a license mode → your trial isn't activated (redo Step 2) or has expired → T2/T6. Workspace creation blocked entirely → some tenants restrict who may create workspaces → T3 (talk to your admin).
+**Three habits for all of SK-07:**
 
-### 1.5 Create your local data folder
+1. **Stop Spark sessions** when you leave a notebook (toolbar → **Stop session**). An idle session keeps consuming CUs until it times out.
+2. **Turn schedules and streams off** when a lab ends. Labs 05 and 07 tell you exactly what to switch off.
+3. **Paid capacity only: pause it** whenever you stop for the day.
 
-Throughout this module you will type small CSV files for FreshCart on your own machine, save them to a standard folder, and upload them into Fabric. Let's create that folder now with PowerShell — partly because it's fast, and partly because as a data engineer you should get comfortable doing file operations from a shell instead of clicking.
+### 3.4 Seeded synthetic data
 
-**Step 5 — Create `C:\FabricLabs\data`.**
+You don't have access to MedVista's EHR, so a Python script generates extracts that behave like real ones — including the mess. It uses a fixed random seed, so everyone in your cohort gets byte-identical files and the expected row counts in Labs 02–07 match exactly. The defects are deliberate; each one is fixed by a specific line of code in Lab_03.
 
-- **What to do:** Open **PowerShell** (press `Win`, type `powershell`, Enter — no admin rights needed) and run:
+---
 
-  ```powershell
-  New-Item -ItemType Directory -Force -Path "C:\FabricLabs\data"
-  ```
+## 4. Step-by-Step Implementation
 
-- **Why:** `-Force` makes the command **idempotent** — a word you will hear constantly in this course. An idempotent operation can be run once or ten times with the same end result. Here, if the folder already exists, the command succeeds quietly instead of erroring. Every good pipeline is built from idempotent steps.
-- **Expected output:**
+### Step 1 — Confirm you can sign in to Fabric
 
-  ```
-      Directory: C:\FabricLabs
+1. Open [app.fabric.microsoft.com](https://app.fabric.microsoft.com) and sign in with your work or school account.
+2. Select your profile picture (top right) to open the **Account manager**.
 
-  Mode                 LastWriteTime         Length Name
-  ----                 -------------         ------ ----
-  d-----         7/7/2026  10:00 AM                data
-  ```
+**Expected output:** the Fabric home page loads and the Account manager shows your name and a license line.
 
-- **Verification:** Run `Test-Path "C:\FabricLabs\data"` — it must print `True`.
-- **Common mistake:** Running this on a machine where `C:\` is locked down by corporate policy. If you get *Access denied*, use a folder under your profile instead — `"$env:USERPROFILE\FabricLabs\data"` — and mentally substitute that path everywhere the labs say `C:\FabricLabs\data`.
-- **macOS/Linux note:** `mkdir -p ~/FabricLabs/data` and substitute `~/FabricLabs/data` throughout.
+✅ **Checkpoint:** You are signed in to Fabric with a work or school account.
 
-**Step 6 — Create your first FreshCart test file.**
+### Step 2 — Start (or join) the Fabric trial
 
-You'll re-create real datasets in Lab_02; this tiny file just proves the end-to-end path (local disk → browser upload) works. Run:
+1. In the Account manager, select **Start trial** (or **Free trial**).
+2. In **Activate your 60-day free Fabric trial capacity**, check the **Trial capacity region**. Accept your home region unless your instructor says otherwise — you can't move Fabric items between regions later without deleting them.
+3. Select **Activate**.
+
+If you don't see **Start trial**, see the troubleshooting table. Your organisation may have disabled trials, or a colleague may share an existing trial with you (they assign your workspace to their trial capacity).
+
+**Expected output:** a confirmation message; the Account manager now shows **Trial status** with the days remaining.
+
+✅ **Checkpoint:** **Trial status** shows about 60 days left. (You can also see it under **OneLake catalog → Govern → Capacities → Trial**.)
+
+### Step 3 — Create the two MedVista workspaces
+
+1. Left navigation → **Workspaces** → **+ New workspace**.
+2. Name: `medvista-data-engineering`. Description: `MedVista medallion lakehouses, notebooks, pipeline, real-time`.
+3. Expand **Advanced** and choose the **Trial** license mode (workspace type). If your organisation gave you a paid capacity, choose **Fabric capacity** and select it instead.
+4. Select **Apply**.
+5. Repeat for `medvista-analytics` (description: `Analyst-facing Warehouse and reports`).
+
+If you created a workspace without choosing the trial: **Workspace settings → License info → Edit → Trial → Select license**.
+
+**Expected output:** both workspaces appear in the Workspaces list; each shows a diamond (premium/Fabric capacity) icon next to its name.
+
+✅ **Checkpoint:** In each workspace, **+ New item** offers **Lakehouse**, **Notebook**, **Data pipeline**, **Warehouse** and **Eventhouse**. If you only see Power BI items, the workspace isn't on a Fabric capacity.
+
+### Step 4 — Create the local project folder and virtual environment
 
 ```powershell
-@"
-test_id,message
-1,hello fabric
-2,freshcart setup ok
-"@ | Out-File -FilePath "C:\FabricLabs\data\setup_test.csv" -Encoding utf8
+New-Item -ItemType Directory -Force C:\DataEngineering\sk07 | Out-Null
+cd C:\DataEngineering\sk07
+py -3.12 -m venv .venv            # or: python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python --version
 ```
 
-- **Why `-Encoding utf8`:** Windows PowerShell 5.1 writes UTF-16 by default, which many data tools misread as garbage characters. UTF-8 is the universal safe choice for CSV. Make it a habit.
-- **Verification:** `Get-Content "C:\FabricLabs\data\setup_test.csv"` prints the three lines back.
-- **Common mistake:** In PowerShell, the closing `"@` of a here-string must start at **column 0** (no indentation), on its own line, or you get a confusing parse error.
+**Expected output:** `Python 3.12.x` (3.11 or later is fine), and your prompt starts with `(.venv)`.
 
-### 1.6 Optional tools
+The generator uses only the standard library, so there's nothing to install yet. Lab_07 adds one package (`azure-eventhub`).
 
-**Power BI Desktop (Windows only, optional until the final lab).**
+✅ **Checkpoint:** `python -c "import sys; print(sys.prefix)"` prints a path ending in `sk07\.venv`.
 
-- **What to do (pick one):**
-  - Microsoft Store: search **"Power BI Desktop"**, install. (Recommended — auto-updates.)
-  - Or winget, from PowerShell:
+### Step 5 — Save and run the data generator
 
-    ```powershell
-    winget install Microsoft.PowerBI
-    ```
+Save this as `C:\DataEngineering\sk07\generate_medvista_data.py` (it's the same script as the guided lab, Step 1.2):
 
-- **Version guidance:** always use the **latest stable** — Power BI Desktop updates monthly and Fabric features (like Direct Lake) need recent builds. Check your version in Power BI Desktop under **Help → About**.
-- **Verification:** launch it; you should see the report canvas and be able to sign in (top right) with the same work account.
-- **macOS users:** Power BI Desktop does not exist for macOS. You will do all report work in the **browser** (Fabric's web report editor) — every lab that mentions Desktop includes the browser path too.
+```python
+"""generate_medvista_data.py - MedVista sample source extracts for SK-07.
 
-**A text editor.** Notepad works for our small CSVs; VS Code (`winget install Microsoft.VisualStudioCode`) is nicer. Your call.
+Creates three days (2026-03-17 .. 2026-03-19) of deliberately imperfect extracts
+that simulate the three MedVista source systems:
 
-### 1.7 Environment verification checklist
+  source_drops/epic/encounters_YYYY-MM-DD.csv        (stands in for the Epic EHR SFTP export)
+  source_drops/workday/schedules_YYYY-MM-DD.csv      (stands in for the Workday REST API)
+  source_drops/sap/supply_orders_YYYY-MM-DD.csv      (stands in for the SAP OData feed)
 
-Run through this now, and again at the start of any lab if something feels off:
+Standard library only. Deterministic: the same seed always produces the same files.
+Usage:  python generate_medvista_data.py [output_root]
+"""
+import csv
+import random
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
 
-- [ ] I can sign in at `app.fabric.microsoft.com` with a **work/school** account.
-- [ ] My account panel (profile picture, top right) shows **Trial: N days left**.
-- [ ] The experience switcher (bottom left) shows more than just Power BI.
-- [ ] Workspace **`sk07-fabric-training`** exists and its License info says **Trial**.
-- [ ] `Test-Path "C:\FabricLabs\data"` returns `True`.
-- [ ] `C:\FabricLabs\data\setup_test.csv` exists and contains 3 lines.
-- [ ] (Optional) Power BI Desktop launches and signs in.
+SEED = 2026
+DATES = ["2026-03-17", "2026-03-18", "2026-03-19"]
+ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"C:\DataEngineering\sk07\data")
+TS = "%Y-%m-%d %H:%M:%S"
 
-If every box is checked, your environment is done. The rest of this lab is understanding *what you just built* — do not skip it; Sections 2 and 3 are where the interview answers come from.
+rng = random.Random(SEED)
+HOSPITALS = [f"H{i:03d}" for i in range(1, 13)]
+HOSP_WEIGHTS = [18, 12, 10, 6, 14, 6, 3, 3, 6, 8, 7, 7]
+DEPARTMENTS = ["D-ER", "D-CARD", "D-ORTH", "D-ONC", "D-PED", "D-MED", "D-SURG", "D-ICU"]
+ENC_TYPES = {  # raw spelling variants -> base type (Silver standardises them)
+    "ER": "E", "ED": "E", "Emergency": "E", "EMERGENCY": "E",
+    "IP": "I", "Inpatient": "I", "OP": "O", "outpatient": "O",
+    "OBS": "B", "Observation": "B", " Telehealth ": "T",
+}
+TYPE_WEIGHTS = [10, 8, 6, 4, 9, 7, 12, 8, 4, 3, 2]
+STAY_HOURS = {"E": (2, 10), "I": (24, 110), "O": (1, 4), "B": (12, 40), "T": (0.25, 1)}
+CHARGES = {"E": (800, 6000), "I": (9000, 60000), "O": (150, 2500), "B": (2500, 12000), "T": (60, 300)}
+DIAGNOSES = ["I21.9", "I50.9", "J18.9", "E11.9", "N39.0", "S72.001A", "K35.80", "J44.1",
+             "A41.9", "R07.9", "I10", "F32.9", "O80", "M54.5", "C34.90"]
+INSURANCE = ["Medicare", "Medicaid", "Commercial", "Self-Pay"]
+
+
+def ts(dt):
+    return dt.strftime(TS)
+
+
+def write_csv(path, header, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(header)
+        w.writerows(rows)
+
+
+# ---------------------------------------------------------------- encounters
+ENC_HEADER = ["encounter_id", "patient_id", "encounter_type", "admission_datetime",
+              "discharge_datetime", "department_id", "attending_physician",
+              "primary_diagnosis", "secondary_diagnoses", "hospital_id",
+              "insurance_type", "total_charges"]
+still_admitted = []  # encounters exported without discharge, re-sent once discharged
+
+
+def new_encounter(day, seq, patient_id=None, admit=None):
+    raw_type = rng.choices(list(ENC_TYPES), weights=TYPE_WEIGHTS)[0]
+    base = ENC_TYPES[raw_type]
+    admit = admit or day + timedelta(minutes=rng.randint(0, 23 * 60 + 59))
+    lo, hi = STAY_HOURS[base]
+    discharge = admit + timedelta(hours=rng.uniform(lo, hi))
+    charges = round(rng.uniform(*CHARGES[base]), 2)
+    if rng.random() < 0.01:
+        charges = -charges                      # data-entry error -> clamped to 0 in Silver
+    insurance = rng.choice(INSURANCE) if rng.random() > 0.05 else ""   # ~5% unknown
+    secondary = "|".join(rng.sample(DIAGNOSES, rng.randint(0, 3)))
+    return {
+        "encounter_id": f"E{day:%Y%m%d}{seq:05d}",
+        "patient_id": patient_id or f"P{rng.randint(1, 40000):06d}",
+        "encounter_type": raw_type,
+        "admit": admit, "discharge": discharge,
+        "department_id": "D-ER" if base == "E" else rng.choice(DEPARTMENTS),
+        "attending_physician": f"DR{rng.randint(1, 600):04d}",
+        "primary_diagnosis": rng.choice(DIAGNOSES),
+        "secondary_diagnoses": secondary,
+        "hospital_id": rng.choices(HOSPITALS, weights=HOSP_WEIGHTS)[0],
+        "insurance_type": insurance, "total_charges": charges,
+    }
+
+
+def enc_row(e, extract_cutoff, swap=False):
+    discharge = e["discharge"] if e["discharge"] <= extract_cutoff else None
+    admit = e["admit"]
+    if swap:                                     # invalid: discharge before admission
+        admit, discharge = e["discharge"], e["admit"]
+    return [e["encounter_id"], e["patient_id"], e["encounter_type"], ts(admit),
+            ts(discharge) if discharge else "", e["department_id"],
+            e["attending_physician"], e["primary_diagnosis"], e["secondary_diagnoses"],
+            e["hospital_id"], e["insurance_type"], f'{e["total_charges"]:.2f}']
+
+
+for d in DATES:
+    day = datetime.strptime(d, "%Y-%m-%d")
+    cutoff = day + timedelta(days=1, hours=6)    # extract runs 06:00 next morning
+    rows, seq = [], 0
+    # 1) late updates: earlier encounters now discharged -> re-sent with discharge time
+    for e in list(still_admitted):
+        if e["discharge"] <= cutoff:
+            rows.append(enc_row(e, cutoff))
+            still_admitted.remove(e)
+    # 2) today's admissions
+    todays = []
+    for _ in range(1000):
+        seq += 1
+        e = new_encounter(day, seq)
+        todays.append(e)
+    # 3) same-day readmissions (~5%): ER visit, discharged, back again later that day
+    for _ in range(50):
+        seq += 1
+        first = rng.choice([t for t in todays if t["discharge"] < day + timedelta(hours=20)])
+        admit = first["discharge"] + timedelta(hours=rng.uniform(0.5, 3))
+        todays.append(new_encounter(day, seq, first["patient_id"], admit))
+    for e in todays:
+        swap = rng.random() < 0.01 and e["discharge"] <= cutoff
+        rows.append(enc_row(e, cutoff, swap))
+        if e["discharge"] > cutoff:
+            still_admitted.append(e)
+    rows += rng.sample(rows, 20)                 # exact duplicate rows (re-sent records)
+    rng.shuffle(rows)
+    write_csv(ROOT / "source_drops" / "epic" / f"encounters_{d}.csv", ENC_HEADER, rows)
+    print(f"encounters_{d}.csv     rows={len(rows)}")
+
+# ---------------------------------------------------------------- schedules
+ROLES = ["Physician", "Hospitalist MD", "Emergency Doctor", "Registered Nurse (RN)",
+         "Nurse Practitioner", "LPN", "Charge Nurse", "Patient Care Assistant",
+         "Lab Technician", "Radiology Tech", "Nursing Aide", "Pharmacist",
+         "Environmental Services", "Unit Clerk", "Medical Intern", "Endoscopy Tech"]
+ROLE_WEIGHTS = [8, 4, 4, 22, 5, 6, 4, 10, 6, 5, 8, 4, 8, 6, 3, 2]
+SCHED_HEADER = ["schedule_id", "employee_id", "role", "department_id", "hospital_id",
+                "shift_date", "shift_start", "shift_end", "is_overtime"]
+for d in DATES:
+    day = datetime.strptime(d, "%Y-%m-%d")
+    rows = []
+    for i in range(1, 601):
+        start = day + timedelta(hours=rng.choice([7, 7, 7, 11, 15, 19, 19, 23]))
+        r = rng.random()
+        hours = 17 if r < 0.015 else (1.5 if r < 0.025 else rng.choice([8, 8, 10, 12, 12]))
+        rows.append([f"S{day:%Y%m%d}{i:04d}", f"EMP{rng.randint(1, 3000):05d}",
+                     rng.choices(ROLES, weights=ROLE_WEIGHTS)[0], rng.choice(DEPARTMENTS),
+                     rng.choices(HOSPITALS, weights=HOSP_WEIGHTS)[0], d, ts(start),
+                     ts(start + timedelta(hours=hours)),
+                     "true" if rng.random() < 0.12 else "false"])
+    rows += rng.sample(rows, 6)
+    rng.shuffle(rows)
+    write_csv(ROOT / "source_drops" / "workday" / f"schedules_{d}.csv", SCHED_HEADER, rows)
+    print(f"schedules_{d}.csv      rows={len(rows)}")
+
+# ---------------------------------------------------------------- supply orders
+CATEGORIES = ["Pharmaceuticals", "Drug - Generic", "Medication Cart", "Surgical Supplies",
+              "Orthopedic Implant", "PPE - Gloves", "Mask N95", "Isolation Gown",
+              "Lab Reagent", "Rapid Test Kit", "Linen", "Office Supplies"]
+ITEMS = [(f"ITM{i:04d}", f"Item {i:04d}", rng.choice(CATEGORIES), round(rng.uniform(0.5, 400), 2))
+         for i in range(1, 121)]
+SUPPLY_HEADER = ["order_id", "item_id", "item_name", "category", "quantity", "unit_cost",
+                 "total_cost", "department_id", "hospital_id", "order_date", "vendor_id"]
+for d in DATES:
+    day = datetime.strptime(d, "%Y-%m-%d")
+    rows = []
+    for i in range(1, 401):
+        item_id, name, cat, cost = rng.choice(ITEMS)
+        qty = 0 if rng.random() < 0.01 else rng.randint(1, 40)
+        total = "" if rng.random() < 0.05 else f"{qty * cost:.2f}"    # ~5% missing total
+        rows.append([f"PO{day:%Y%m%d}{i:04d}", item_id, name, cat, qty, f"{cost:.2f}", total,
+                     rng.choice(DEPARTMENTS), rng.choices(HOSPITALS, weights=HOSP_WEIGHTS)[0],
+                     d, f"V{rng.randint(1, 15):02d}"])
+    rows += rng.sample(rows, 4)
+    rng.shuffle(rows)
+    write_csv(ROOT / "source_drops" / "sap" / f"supply_orders_{d}.csv", SUPPLY_HEADER, rows)
+    print(f"supply_orders_{d}.csv  rows={len(rows)}")
+
+print(f"Done. Files written under {ROOT / 'source_drops'}")
+```
+
+Run it:
+
+```powershell
+cd C:\DataEngineering\sk07
+python generate_medvista_data.py
+```
+
+**Expected output:**
+
+```
+encounters_2026-03-17.csv     rows=1070
+encounters_2026-03-18.csv     rows=1202
+encounters_2026-03-19.csv     rows=1281
+schedules_2026-03-17.csv      rows=606
+schedules_2026-03-18.csv      rows=606
+schedules_2026-03-19.csv      rows=606
+supply_orders_2026-03-17.csv  rows=404
+supply_orders_2026-03-18.csv  rows=404
+supply_orders_2026-03-19.csv  rows=404
+Done. Files written under C:\DataEngineering\sk07\data\source_drops
+```
+
+✅ **Checkpoint:** `Get-ChildItem -Recurse C:\DataEngineering\sk07\data\source_drops -File | Measure-Object` reports `Count : 9`. The three encounters files are roughly 120–150 KB each.
+
+### Step 6 — Meet the defects
+
+Look at day one of the Epic extract the way a data engineer would before writing any transformation:
+
+```powershell
+$enc = Import-Csv C:\DataEngineering\sk07\data\source_drops\epic\encounters_2026-03-17.csv
+$enc.Count                                                                  # 1070
+
+# 1. Encounter types: eleven spellings of five concepts (note the spaces in " Telehealth ")
+$enc | Group-Object encounter_type -CaseSensitive | Sort-Object Name | Format-Table Name, Count
+
+# 2. Exact duplicate rows (re-sent records)
+($enc | Group-Object encounter_id | Where-Object Count -gt 1).Count         # 20
+
+# 3. Negative charges (data-entry errors)
+($enc | Where-Object { [double]$_.total_charges -lt 0 }).Count              # 10
+
+# 4. Discharge before admission (impossible)
+($enc | Where-Object { $_.discharge_datetime -ne '' -and
+                       [datetime]$_.discharge_datetime -lt [datetime]$_.admission_datetime }).Count   # 9
+
+# 5. Missing insurance, and patients still admitted (no discharge yet)
+($enc | Where-Object { $_.insurance_type -eq '' }).Count                    # 53
+($enc | Where-Object { $_.discharge_datetime -eq '' }).Count                # 319
+```
+
+Then the cross-day behaviour that drives the Silver MERGE in Lab_03:
+
+```powershell
+$day2 = Import-Csv C:\DataEngineering\sk07\data\source_drops\epic\encounters_2026-03-18.csv
+($day2 | Where-Object { $_.encounter_id -like 'E20260317*' }).Count         # 134
+```
+
+Those 134 rows are 17 March encounters re-sent on 18 March because the patient has now been discharged — the "late update" problem in the guided lab's *Why Delta MERGE* row.
+
+Finally, the supply extract:
+
+```powershell
+$sup = Import-Csv C:\DataEngineering\sk07\data\source_drops\sap\supply_orders_2026-03-17.csv
+($sup | Where-Object { $_.total_cost -eq '' }).Count                        # 17 (derive from quantity × unit_cost)
+($sup | Where-Object { $_.quantity -eq '0' }).Count                         # 4  (no cost -> filtered out)
+```
+
+✅ **Checkpoint:** Your numbers match the comments. Write down which defects you think should be *fixed* and which should be *rejected* — Lab_03 gives the answer.
+
+### Step 7 — Optional: install the Capacity Metrics app
+
+If you're the trial's capacity admin, install the **Microsoft Fabric Capacity Metrics** app from the Fabric/Power BI apps marketplace. It shows CU consumption per item, which is how you'll spot a forgotten Spark session or stream. Skip this if your organisation blocks app installs.
 
 ---
 
-## Section 2: Business Context — Why Companies Adopt Fabric
+## 5. Production Engineering Practices
 
-### Meet FreshCart
-
-Throughout SK-07 you are the first data engineer at **FreshCart**, a fictional online grocery startup. FreshCart takes orders on a website, delivers groceries from three local warehouses, and is growing fast. Today their "analytics" is a heroic operations manager exporting CSVs and building spreadsheets by hand. Reports are late, numbers disagree between departments, and nobody trusts the dashboard because nobody knows where its data came from.
-
-Your job across this module: build FreshCart a small but *production-shaped* analytics platform on Microsoft Fabric — raw sales data in, trustworthy dashboards out.
-
-### The problem Fabric is designed to solve
-
-Before Fabric (and still today, in many companies), a typical Azure analytics stack looked like this:
-
-```mermaid
-flowchart LR
-    subgraph Old["Traditional stack: 5+ separately managed services"]
-        ADF["Azure Data Factory<br/>(data movement)"] --> ADLS["ADLS Gen2 storage<br/>(the data lake)"]
-        ADLS --> DBX["Databricks or<br/>Synapse Spark<br/>(transformation)"]
-        DBX --> SYN["Synapse SQL<br/>(warehouse)"]
-        SYN --> PBI["Power BI<br/>(reports)"]
-    end
-```
-
-Each box is a separate service with its own pricing model, its own security configuration, its own networking, and often its own team. Someone has to make ADF talk to storage, storage talk to Spark, Spark write formats the warehouse can read, and the warehouse feed Power BI efficiently. In real companies, **integrating these services consumes more engineering time than the actual data work**. Failures happen at the seams: expired credentials between services, format mismatches, data copied into three places that drift apart.
-
-Fabric's bet is: collapse the seams.
-
-```mermaid
-flowchart LR
-    subgraph Fabric["Microsoft Fabric: one SaaS product, one storage layer, one bill"]
-        DF["Data Factory<br/>(pipelines)"] --> OL[("OneLake<br/>(single storage)")]
-        NB["Spark notebooks"] --> OL
-        WH["Warehouse (T-SQL)"] --> OL
-        OL --> PBI2["Power BI<br/>(Direct Lake)"]
-    end
-```
-
-Everything reads and writes the **same copy of the data** in OneLake, in the same open format (Delta Parquet — Lab_01 explains). No credentials between components. One bill.
-
-### Who cares, concretely?
-
-| Stakeholder | What Fabric changes for them |
-|---|---|
-| **CFO / budget owner** | One predictable capacity cost instead of six variable service bills; less integration labor to pay for. |
-| **Small data team (like you at FreshCart)** | A two-person team can run an end-to-end platform. No infrastructure to patch, size, or network. |
-| **Analysts** | Reports read the lake directly (Direct Lake) — fewer stale extracts, fewer "whose number is right?" fights. |
-| **IT / security** | One place to govern access instead of five; identity is Entra ID everywhere. |
-| **Existing Power BI shops** | Fabric is the same portal they already use — adoption friction is low. This is a huge share of real-world adoption. |
-
-### What happens if the analytics platform fails?
-
-At FreshCart scale: the Monday sales report is wrong, the buying team over-orders strawberries, and perishable stock is written off. At enterprise scale: regulatory reports are late (fines), executives make decisions on stale numbers, and — most corrosive of all — the organization quietly stops trusting data and goes back to gut feel. The reliability practices threaded through this module (verification steps, idempotency, naming discipline) exist because *broken trust is more expensive than broken pipelines*.
+1. **Decide the region once.** Choose the capacity region where the data and its consumers are; moving Fabric items between regions means deleting and recreating them.
+2. **Separate workspaces by audience and sensitivity**, not by tool. Engineering (raw PHI) and analytics (curated) are different security boundaries.
+3. **Name things predictably.** `medvista_<layer>` for lakehouses, `NN_<verb>_<object>` for notebooks, `MedVista_<Purpose>` for pipelines. You'll reference these names in code.
+4. **Treat cost as a requirement.** Write down who pauses the capacity, which schedules exist, and which streams run continuously.
+5. **Seed your synthetic data and document its defects.** Reproducible data makes failures reproducible, and lets a reviewer check your row counts.
 
 ---
 
-## Section 3: Concept Explanation
+## 6. Troubleshooting
 
-### 3.1 SaaS vs PaaS — the single most important framing
-
-- **PaaS (Platform-as-a-Service):** the cloud gives you managed *building blocks* — a Spark cluster here, a storage account there — and **you** assemble, configure, secure, and connect them. Azure Data Factory, Databricks, and Synapse are PaaS. Powerful, flexible, and a lot of assembly required.
-- **SaaS (Software-as-a-Service):** the cloud gives you a *finished product*. You sign in and use it; the vendor runs everything underneath. Gmail is SaaS. **Fabric is SaaS**: you never see a virtual machine, a storage account, or a network setting. You create a "Lakehouse" and Fabric decides how it's stored and computed.
-
-The trade-off, honestly stated: SaaS means **faster and simpler** but **less control**. If your company needs exotic Spark configurations, private networking to on-prem mainframes, or a specific Spark version, PaaS tools give you knobs Fabric hides. For the large majority of analytics workloads, the knobs weren't being used anyway. Interviewers love asking about this trade-off — see Section 6.
-
-### 3.2 The capacity model: F-SKUs, CUs, smoothing, throttling
-
-This is the concept beginners find most alien, so let's build it up slowly.
-
-**The problem:** Fabric is SaaS, so you can't pay "per VM" — there are no VMs to see. But compute isn't free. Microsoft needs a unit to sell you.
-
-**The answer: capacity.** A **capacity** is a pool of compute power you rent by the hour (or get free, in the trial). Every workspace is attached to a capacity, and everything anyone does in that workspace — running a notebook, refreshing a report, executing a pipeline — draws from the pool.
-
-**F-SKUs.** Capacities come in sizes named **F2, F4, F8, F16, F32, F64, F128 ... F2048**. ("SKU" = Stock Keeping Unit, i.e., a product size, like S/M/L t-shirts.) Each doubling doubles the compute. Your **trial is F64-equivalent** — a mid-large size that real companies run production on, which is why the trial feels roomy.
-
-**CUs (Capacity Units).** The number in the SKU is how many **Capacity Units** it provides: an F64 gives 64 CUs. A CU is an abstract unit of compute-per-second. Every operation you run is metered in **CU-seconds**: a small SQL query might cost a few CU-seconds; a big Spark job, many thousands. You don't need to calculate these by hand — Fabric has a Capacity Metrics app that shows consumption — but you should understand the mental model: **capacity = a bucket that refills every second at 64 CUs/second (for F64), and every action scoops from it.**
-
-**Smoothing.** Real workloads are spiky: nothing for an hour, then a huge pipeline at 2 a.m. If Fabric billed spikes literally, you'd need to buy a capacity big enough for your worst second. Instead, Fabric **smooths**: the cost of a spike is spread out over a following window (minutes for interactive queries, up to 24 hours for background jobs like pipeline runs). Plain-English version: *Fabric lets you borrow against the next few hours of your capacity, so short bursts above your size are fine.*
-
-**Throttling.** Borrowing has a limit. If you *sustain* usage above what your capacity provides — the smoothed debt keeps growing — Fabric starts **throttling**: first new interactive queries get delayed, then rejected, and in extreme sustained overload background jobs are too. Plain-English version: *overspend briefly and nothing happens; overspend continuously and Fabric slows you down rather than silently billing you more.* This is a deliberate design difference from pay-as-you-go clouds (where a runaway job produces a scary invoice instead of a slowdown).
-
-```mermaid
-flowchart TD
-    A["You run something<br/>(query, notebook, pipeline)"] --> B["Operation consumes CU-seconds"]
-    B --> C{"Usage over<br/>capacity size?"}
-    C -- "No" --> D["Runs normally"]
-    C -- "Briefly (spike)" --> E["Smoothing: cost spread<br/>over future window — still runs"]
-    C -- "Sustained overload" --> F["Throttling: delays,<br/>then rejections"]
-```
-
-**Trial limits to remember:**
-- **60 days**, counted from activation (the countdown is in your account panel).
-- F64-equivalent compute + **1 TB** OneLake storage.
-- One trial per user; your trial capacity is yours, in your tenant's **home region**.
-- At expiry: nothing is deleted immediately, but items on trial capacity become unusable until moved to a paid capacity. **Practical advice: finish the module within your 60 days, and export/keep local copies of your notebook code as you go** (the labs remind you).
-
-### 3.3 OneLake — the one-liner (full story in Lab_01)
-
-**OneLake** is Fabric's single, automatic data lake: one logical storage layer for the entire tenant, into which every workspace and every item writes its data, in the open Delta Parquet format. The marketing tagline — "OneDrive for data" — is genuinely apt, and Lab_01 is dedicated to it. For today, just know: when you create things in `sk07-fabric-training`, their data lands in OneLake without you configuring any storage.
-
-### 3.4 Alternatives — what else could FreshCart have chosen?
-
-A one-row preview (Lab_01 has the full comparison table): FreshCart could have built on **Databricks** (more powerful Spark, more assembly), **Snowflake** (excellent warehouse, weaker native orchestration/BI), or **raw Azure services** (maximum control, maximum plumbing). Fabric wins for FreshCart because the team is tiny, already lives in Microsoft 365, and values time-to-value over knob-tweaking. That reasoning — *fit the tool to the team, not just the workload* — is exactly what consultants get paid for.
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| "This email is a personal email address" at sign-up | Personal Microsoft account | Use a work or school account; ask your organisation or instructor for one |
+| No **Start trial** button in the Account manager | Trials disabled by your tenant admin, or you already have a Power BI trial | Try creating a Lakehouse in **My workspace**; if no trial prompt appears, ask your Fabric admin to enable *Users can try Microsoft Fabric paid features* or to share a capacity |
+| "Trial limit reached" | Your tenant has used its quota of trial capacities | Ask a colleague who has a trial to assign your workspaces to it (they must give you Contributor permission on their trial capacity) |
+| Workspace has no Lakehouse/Notebook items | Workspace is on Pro, not on Fabric capacity | Workspace settings → **License info** → **Edit** → Trial |
+| `python` opens the Microsoft Store | Windows app-execution alias | Use `py -3.12`, or disable the alias in *Settings → Apps → Advanced app settings → App execution aliases* |
+| `Activate.ps1 cannot be loaded because running scripts is disabled` | PowerShell execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then retry |
+| Generator counts differ from the expected output | Edited script or different Python major version | Re-copy the script exactly; use Python 3.11+ (the random module's algorithms are stable across these versions) |
+| `PermissionError` writing CSVs | Folder is OneDrive-synced or a file is open in Excel | Use `C:\DataEngineering\sk07` and close Excel |
 
 ---
 
-## Section 4: Step-by-Step Implementation — Touring and Verifying Your Environment
+## 7. Reflection
 
-You already did the build steps in Section 1. This section is a guided tour that doubles as a deeper verification — you'll poke every part of the UI you'll need in later labs. Nothing you do here can break anything.
+### Interview questions (answer out loud first)
 
-### Step 4.1 — Learn the portal's anatomy
+1. **"What is a Fabric capacity and how is it billed?"** — A capacity is a pool of compute measured in capacity units (F2 = 2 CUs … F2048). All workloads in assigned workspaces share it. Pay-as-you-go capacities bill per hour while running (pausable); reservations give a discount for a 1-year commitment. Storage in OneLake is billed separately.
+2. **"Your team shares one trial and everything is slow. What do you check?"** — The Capacity Metrics app for which items are consuming CUs: usually forgotten Spark sessions, a pipeline on a tight schedule, or a continuous stream. Stop them; separate heavy dev work onto its own capacity if it keeps happening.
+3. **"Why not put all MedVista items in one workspace?"** — Workspace roles are the main access boundary. Raw PHI and analyst-facing views need different audiences; separate workspaces keep that boundary simple and auditable.
 
-- **What to do:** Sign in at `app.fabric.microsoft.com` and just look, matching what you see against this map:
+### Common interview traps
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│  ☰  Microsoft Fabric        [search bar]        ⚙  ?  👤       │ ← top bar: settings, help, ACCOUNT PANEL (trial countdown lives here)
-├──────────┬─────────────────────────────────────────────────────┤
-│ Home     │                                                     │
-│ Browse   │          main canvas                                │
-│ OneLake  │   (home cards, or the contents of                   │
-│ Create   │    whatever workspace/item you opened)              │
-│ Workspaces│                                                    │
-│  ⭐ sk07- │                                                     │
-│  fabric-  │                                                    │
-│  training │                                                    │
-├──────────┤                                                     │
-│ [Switcher]│                                                    │ ← bottom-left: EXPERIENCE SWITCHER
-└──────────┴─────────────────────────────────────────────────────┘
-```
-
-- **Why:** Every later lab gives directions like "left nav → Workspaces" — thirty seconds of orientation now saves many minutes later.
-- **Expected output / verification:** You can point at: the account panel (top right), the experience switcher (bottom left), the Workspaces flyout (left nav), and your `sk07-fabric-training` workspace pinned in it (click the pin icon next to the workspace name in the flyout to pin it — do this now).
-- **Common mistake:** Confusing **Browse** (recent/shared items across all workspaces) with **Workspaces** (containers). When a lab says "open your workspace," use **Workspaces**, not Browse.
-
-### Step 4.2 — Walk the experience switcher
-
-- **What to do:** Click the experience switcher (bottom left) and select each experience in turn: **Data Factory**, **Data Engineering**, **Data Warehouse**, **Real-Time Intelligence**, **Data Science**, **Power BI**. Each time, click **Create** (or **+ New item**) and *read* the list of item types offered — then press Esc without creating anything.
-- **Why:** The switcher doesn't move your data or change your workspace — it only changes *which creation options and menus are emphasized*. Beginners often think experiences are separate products; they're lenses on one product. Seeing the item lists cements what each experience is *for*.
-- **Expected output:** Roughly —
-
-  | Experience | Typical items offered |
-  |---|---|
-  | Data Engineering | Lakehouse, Notebook, Spark Job Definition, Environment |
-  | Data Factory | Data pipeline, Dataflow Gen2 |
-  | Data Warehouse | Warehouse |
-  | Real-Time Intelligence | Eventstream, Eventhouse/KQL Database, Real-Time Dashboard |
-  | Data Science | ML Model, Experiment, Notebook |
-  | Power BI | Report, Semantic model, Dashboard |
-
-- **Verification:** You saw *Lakehouse* offered under Data Engineering. (In Lab_02 you'll create `freshcart_bronze` there.)
-- **Common mistake:** Actually creating an item during the tour and leaving debris. If you accidentally created something, open the workspace, hover the item, `...` menu → **Delete**.
-- **Troubleshooting:** An experience missing entirely → usually fine (Microsoft regroups them); as long as Data Engineering, Data Factory, Data Warehouse, and Power BI exist somewhere in the switcher, you're set. Item creation greyed out with a capacity warning → your workspace isn't on trial capacity → re-do Step 4 of Section 1.
-
-### Step 4.3 — Inspect workspace settings
-
-- **What to do:** Open `sk07-fabric-training` → **Workspace settings** (top right of the workspace view, or `...` → Workspace settings). Visit these tabs, *reading only*:
-  1. **License info / Premium** — confirm **Trial** again.
-  2. **General** — note you could set a workspace image/description (optional: paste a description like *"SK-07 training — FreshCart analytics platform"* — future-you will thank you).
-  3. Close settings, then click **Manage access** — you'll see yourself listed as **Admin**.
-- **Why:** These three places — license, description, access — are the first things a professional checks when handed an unfamiliar workspace. Build the reflex now.
-- **Expected output:** License mode = Trial; you = Admin.
-- **Verification:** Screenshot the License info tab and save it — if your trial misbehaves later, "it said Trial on July 7" is useful evidence for support/admins.
-- **Common mistake:** None dangerous here — settings tabs are safe to read. Just don't change license mode away from Trial.
-
-### Step 4.4 — Confirm the local ↔ cloud path with a throwaway upload
-
-We'll prove that a file from `C:\FabricLabs\data` can reach Fabric. We need *somewhere* to upload to, so we'll create a **temporary** lakehouse and delete it afterwards. (Don't worry about what a lakehouse *is* yet — Lab_01 and Lab_02 cover it. Today it's just a target for an upload test.)
-
-- **What to do:**
-  1. In `sk07-fabric-training`, click **+ New item**, choose **Lakehouse**, name it `tmp_setup_check`, click **Create**.
-  2. When the lakehouse view opens, in the **Explorer** pane on the left, right-click (or `...`) on **Files** → **Upload → Upload files**.
-  3. Browse to `C:\FabricLabs\data\setup_test.csv`, upload it.
-  4. Click **Files** in the Explorer — you should see `setup_test.csv` listed. Click the file name to preview it: two data rows, `hello fabric` and `freshcart setup ok`.
-- **Why:** This one test exercises your account, your capacity, your workspace, item creation, and file upload — i.e., every dependency of every later lab — in about ninety seconds.
-- **Expected output:** The CSV visible and previewable under Files.
-- **Verification:** The preview shows the header `test_id,message` and 2 rows. If the preview shows garbled characters, your file wasn't saved as UTF-8 — re-run the Step 6 command from Section 1.5 (it includes `-Encoding utf8`) and re-upload.
-- **Common mistakes:**
-  - Uploading into **Tables** instead of **Files**. Tables expects Delta-format data, not raw CSV; the upload option isn't offered there anyway, but people hunt in the wrong place. Raw files go to **Files**.
-  - Creating the lakehouse but not seeing it finish provisioning — the first item on a fresh capacity can take a minute. Wait for the Explorer pane to render before uploading.
-- **Troubleshooting:** Upload spinner never finishes → corporate proxy or VPN interfering; try without VPN or from another network. "Capacity paused / not available" error → Troubleshooting T6.
-
-- **Clean up (important habit):** Go back to the workspace item list, hover `tmp_setup_check`, `...` → **Delete** → confirm. Also delete the auto-created companion items (a *SQL analytics endpoint* and a *semantic model* with the same name) if they remain — deleting the lakehouse usually removes them together. Leaving throwaway items around is how real workspaces become junk drawers.
-
-### Step 4.5 — Final verification checklist (end of implementation)
-
-- [ ] Workspace `sk07-fabric-training` exists, is pinned, License = Trial, you = Admin.
-- [ ] You toured all experiences and know where Lakehouse/Pipeline/Warehouse creation lives.
-- [ ] `setup_test.csv` uploaded and previewed successfully.
-- [ ] `tmp_setup_check` deleted — the workspace item list is **empty** again.
-- [ ] Trial countdown visible in the account panel. **Write the expiry date in your notes right now** — day 60 arrives faster than you think.
-
----
-
-## Section 5: Production Engineering Practices
-
-Even a setup lab has production lessons. Three habits to start today:
-
-### 5.1 Naming conventions are not cosmetic
-
-We dictated `sk07-fabric-training`, and later labs dictate `freshcart_bronze`, `freshcart_silver`, `freshcart_gold`, `freshcart_warehouse`, `FreshCart_Daily_Ingestion`, `01_bronze_to_silver`, `02_silver_to_gold`. Notice the pattern: **project prefix + purpose**, lowercase-with-underscores for data items, numbered prefixes for ordered notebooks.
-
-**Why it matters — a failure story:** a real team had lakehouses named `LH1`, `test`, `new_test`, and `final_v2_REAL`. A contractor, asked to "clean up test items," deleted `test` — which turned out to be the production bronze layer feeding the CFO's dashboard. Nothing in the name warned them. A convention like `freshcart_bronze` *is documentation that can't fall out of date with the item it names*. In every real engagement, agree on a naming standard in week one and write it down.
-
-### 5.2 Separate workspaces per environment
-
-In this course, one workspace is fine. In production, you'd have at least `freshcart-dev`, `freshcart-test`, and `freshcart-prod` — separate workspaces so that (a) experiments can't touch production data, (b) access can differ (everyone in dev, two people in prod), and (c) deployment between them is an explicit, reviewable act (Fabric has *deployment pipelines* for exactly this). The cheap habit you can practice now: treat `sk07-fabric-training` as if it were prod — no junk items, everything named, everything you create either used or deleted (you already practiced this with `tmp_setup_check`).
-
-### 5.3 Cost awareness — even on a free trial
-
-Your trial is free, but the *behaviors* transfer to paid capacity where every CU-second is money:
-
-- **Know your consumers.** A Spark notebook left running an infinite loop consumes CUs continuously. On a paid F8, one forgotten loop can throttle the whole company's reports (remember Section 3.2: everyone in the workspace shares the bucket).
-- **Prefer scheduled over always-on.** Later, when you schedule `FreshCart_Daily_Ingestion`, you'll run it once daily — not every 5 minutes "just in case."
-- **Check the meter.** On paid capacities, admins install the **Microsoft Fabric Capacity Metrics app** to see which items burn CUs. Remember it exists; mentioning it in an interview signals operational maturity.
-- **Right-size and scale.** Paid F-SKUs can be scaled up/down or paused (paused = no compute cost, storage remains). A common real pattern: run dev capacity paused outside working hours.
-
-### 5.4 Document as you go
-
-Start a plain text/markdown notes file — call it your **runbook** — recording: your trial expiry date, workspace name, the exact names of items as you create them, and anything weird you had to work around. Every later lab assumes you have this. Production teams live and die by runbooks: when the pipeline fails at 2 a.m., the on-call engineer reads the runbook, not the codebase.
-
----
-
-## Section 6: Reflection
-
-### What you learned
-
-- Microsoft Fabric is a **SaaS** analytics platform: one product, one portal, one storage layer (OneLake), one compute currency (capacity/CUs) — versus the PaaS approach of assembling separate services.
-- **Trials require work/school (Entra ID) accounts**; personal accounts must go via an employer/training tenant or a self-created tenant (the old M365 Developer Program route is deprecated).
-- The **capacity model**: F-SKUs size the CU bucket, **smoothing** forgives spikes, **throttling** punishes sustained overload.
-- Hands-on: activated a 60-day F64-equivalent trial, built `sk07-fabric-training` on trial capacity, created `C:\FabricLabs\data`, and proved the local→cloud upload path.
-
-### Why it matters
-
-Environment setup is where most beginner projects die — not in the clever transformation logic, but in "I can't sign in / the button is greyed out / it worked yesterday." You now have a verified foundation *and* the troubleshooting vocabulary (tenant, capacity, license mode) to diagnose problems instead of restarting from scratch.
-
-### Interview questions
-
-**Q1. "Is Microsoft Fabric SaaS or PaaS, and why does the distinction matter?"**
-*Model answer:* Fabric is SaaS — you consume a finished product with no VMs, storage accounts, or networking to manage; Microsoft operates the platform. It matters because it changes the team's job: less infrastructure integration, faster time-to-value, but less low-level control than PaaS options like Databricks or Synapse. The right choice depends on whether the organization actually needs that control.
-*Trap:* calling Fabric "IaaS" or saying "it runs on your Azure subscription" — the trial and the product specifically do **not** require an Azure subscription.
-
-**Q2. "What is a Fabric capacity, and what does F64 mean?"**
-*Model answer:* A capacity is the pool of compute that all workloads in attached workspaces share, sold in F-SKU sizes; F64 provides 64 Capacity Units — an abstract compute-per-second rate that every operation (queries, Spark, pipelines, report refreshes) is metered against. The trial provides an F64-equivalent capacity for 60 days.
-*Trap:* confusing capacity (compute) with storage — OneLake storage is metered separately.
-
-**Q3. "Explain smoothing and throttling in Fabric."**
-*Model answer:* Smoothing spreads the cost of short usage spikes over a following time window, so bursty workloads don't require buying peak-sized capacity. Throttling is what happens when overload is *sustained*: Fabric progressively delays and then rejects operations instead of billing overage. Together they make Fabric's cost predictable — the failure mode is a slowdown, not a surprise invoice.
-*Trap:* saying throttling kicks in the instant you exceed your SKU — smoothing means brief bursts are fine by design.
-
-**Q4. "Why can't you sign up for Fabric with a personal Outlook/Gmail account, and what would you advise someone who only has one?"**
-*Model answer:* Fabric is licensed and governed at the *tenant* (organization) level in Microsoft Entra ID, so it requires an organizational identity. Someone with only a personal account should use an account from their employer or training program, or create their own free Entra ID tenant and a user inside it. (The old M365 Developer Program sandbox is no longer generally available.)
-*Trap:* recommending the deprecated Developer Program — dated answer that signals stale knowledge.
-
-**Q5. "What happens when a Fabric trial expires?"**
-*Model answer:* After 60 days the trial capacity stops; workspaces attached to it can no longer run workloads and items become inaccessible until the workspace is reassigned to a paid Fabric capacity. Data isn't instantly destroyed, but the safe practice is to export code and critical data before expiry, or purchase/attach capacity in time.
-*Trap:* claiming everything is deleted at midnight on day 60 (too alarmist) or that everything keeps working free forever (too relaxed).
-
-**Q6. "Your company already runs ADF + ADLS + Databricks + Power BI. A director asks whether to move to Fabric. What's your 60-second answer?"**
-*Model answer:* "It depends on where our pain is. If integration overhead, cross-service security, and data duplication are hurting us, Fabric's unified SaaS model and OneLake reduce them, and our Power BI investment carries over directly. If our value comes from heavily tuned Databricks jobs or fine-grained infrastructure control, we'd lose knobs we actually use. I'd propose a bounded pilot — one workload end-to-end on trial capacity — and measure before migrating anything."
-*Trap:* an unconditional yes or no. The interviewer is testing judgment, not enthusiasm.
-
-**Q7. "What's the difference between a workspace and a capacity?"**
-*Model answer:* A workspace is a logical container for items (lakehouses, notebooks, pipelines, reports) with its own access roles; a capacity is the compute resource that workspaces attach to and draw CUs from. Many workspaces can share one capacity; each workspace attaches to exactly one capacity at a time.
-*Trap:* saying data "lives in the capacity" — data lives in OneLake; capacity is compute.
-
-### Common interview traps recap
-
-- Mixing up **tenant / capacity / workspace** — memorize: tenant = organization, capacity = compute pool, workspace = project container.
-- Assuming Fabric needs an Azure subscription (it doesn't; it needs an Entra tenant).
-- Treating experiences (Data Engineering, Data Factory, ...) as separate products — they're views of one product.
+- Saying Fabric "charges per query" like a serverless warehouse. It doesn't: you pay for capacity time, and queries consume that capacity.
+- Forgetting that a paused capacity still bills storage.
 
 ### Key takeaways
 
-1. **Everything in Fabric hangs off three nouns: tenant → capacity → workspace.** Get those straight and the rest of the module is easy.
-2. **The trial is genuinely production-grade (F64-equivalent) — but time-boxed.** Note your expiry date; pace the module inside it.
-3. **Verification beats hope.** You verified every setup step today; carry that discipline into every pipeline you ever build.
+- Fabric = one SaaS platform, one lake (OneLake), one compute pool (capacity).
+- The trial is free but finite and throttles when overused; paid capacity bills by the hour until paused.
+- Workspaces are security boundaries — design them deliberately.
+- Your seeded data has known defects with known counts; Lab_03 fixes them.
 
-### Next lab
+---
 
-➡️ **Lab_01_Fabric_Platform_and_OneLake.md** — a proper tour of the Fabric experiences and a deep dive into OneLake: the "OneDrive for data," its path structure, shortcuts, and how Fabric compares to Databricks, Snowflake, and raw Azure. You'll also install the OneLake file explorer so OneLake shows up right inside Windows File Explorer.
+## Next
+
+[Lab_01 — Lakehouses, OneLake and Bronze Schemas](Lab_01_Lakehouses_OneLake_and_Bronze_Schemas.md): create the three medallion lakehouses, upload today's source drops to OneLake, and create the typed Bronze tables.
