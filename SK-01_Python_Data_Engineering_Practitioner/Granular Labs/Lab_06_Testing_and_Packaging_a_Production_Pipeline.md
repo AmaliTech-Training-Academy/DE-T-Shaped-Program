@@ -1,360 +1,473 @@
 # Lab 06 — Testing and Packaging a Production Pipeline
 
-> **Module:** SK-01 Python Data Engineering Practitioner
-> **Estimated time:** 4–6 hours
-> **Prerequisites:** Lab 05 — your pipeline logs, retries, reads config, and is idempotent.
+> **Goal:** Protect the ShopStream pipeline with automated tests: unit tests for each cleaning rule, tests that lock in the GDPR opt-out rule, offline tests for the CRM API, and one end-to-end test that runs the whole pipeline in a temporary folder. Then package the project so another engineer can set it up and run it from the README alone.
+>
+> **Time:** 3–4 hours | **Difficulty:** Intermediate | **Prerequisites:** [Lab 05](Lab_05_Logging_Error_Handling_and_Idempotency.md) completed: `pipeline.py` contains the complete guided lab code and `python pipeline.py` gives 745 records and 7/7 checks.
+>
+> **Guided lab coverage:** [SK-01 End-to-End Guided Lab](../Labs/SK-01_End_to_End_Guided_Lab.md): tests for **Parts 2–5 and 8** (cleaning, deduplication, validation, CRM API, full run) and the handover of the finished project. The guided lab has no testing part; this lab adds it on top of the same `pipeline.py`.
 
 ---
 
-## 1. Environment Setup
+## The business problem
 
-```powershell
-cd $HOME\Downloads\Upskilling\SK-01_Python_Data_Engineering_Practitioner
-.\.venv\Scripts\Activate.ps1
-pip install pytest
-mkdir pipeline\tests -Force
-New-Item pipeline\tests\__init__.py -ItemType File
-```
+In 3 weeks the campaign goes out. Before then, someone will "just tweak" the pipeline: a new region spelling, a faster dedup, a new source. In Lab 03 you saw that commenting out 2 lines silently breaks the GDPR opt-out rule. Nothing crashes and the summary still says 7/7. Only an EU customer's complaint would reveal it.
 
-**pytest** is the de-facto standard Python test runner: it discovers files named `test_*.py`, runs every function named `test_*`, and reports pass/fail.
-
-**Verify:**
-
-```powershell
-cd pipeline
-pytest --version
-```
-
-**Expected output:** a version line like `pytest 8.x.x`.
-
-**Common problems:** `pytest` not recognized → venv not active. Tests not discovered later → files/functions must be named `test_*`; a file named `tests.py` or a function named `check_salary` is silently ignored.
+**Automated tests** are the safety net. They're small programs that check your code gives the expected answers, run in seconds, and fail loudly the moment a change breaks a rule. Packaging (`requirements.txt`, `README.md`, `.gitignore`) is the other half of a handover: the next engineer can rebuild your environment and run the pipeline without you.
 
 ---
 
-## 2. Business Context
+## Learning objectives
 
-**The problem:** Next month, someone (probably you) will change `parse_salary` to handle a new currency. How will you know the change didn't break the *existing* currencies? Today the answer is "run the whole pipeline and eyeball the output" — slow, unreliable, and it gets skipped under deadline pressure. Then a regression ships, payroll numbers are wrong, and the client finds out before you do.
+By the end of this lab you can:
 
-**Automated tests** are the answer the industry converged on: small programs that verify your functions against known inputs and expected outputs, runnable in seconds, on every change.
-
-**Why businesses insist on tests:**
-- **Regression protection** — the #1 value. Most bugs are introduced by *changes to working code*.
-- **Change velocity** — with tests, engineers refactor confidently; without, codebases fossilize because everyone fears touching them.
-- **Handover** — a consultancy delivering this pipeline to a client *will be asked for testing evidence*. No tests, no acceptance. (Your capstone replicates this exactly.)
-- **Documentation that can't lie** — tests show how functions are meant to be called, and unlike comments, they fail when they go stale.
-
-**What happens without them?** The industry term is "change paralysis": systems nobody dares modify, patched around instead of fixed, until a rewrite is cheaper. Tests are how codebases stay alive.
+1. Write and run pytest tests: plain `assert`, `@pytest.mark.parametrize`, `pytest.raises`, and the `tmp_path`/`monkeypatch` fixtures.
+2. Choose what to test: business rules (GDPR opt-out, source priority), edge cases (blanks, junk) and the contract between stages.
+3. Test code that calls an API, offline, with `unittest.mock.patch`.
+4. Write an end-to-end test that runs the whole pipeline in isolation.
+5. Package a project for handover: pinned requirements, a README and a `.gitignore`.
 
 ---
 
-## 3. Concept Explanation
+## Key terms
 
-### 3.1 The testing pyramid (data engineering edition)
+- **Unit test:** checks one function with small, hand-made inputs, e.g. `standardize_regions(["usa"]) == ["US"]`.
+- **End-to-end (integration) test:** runs the whole pipeline and checks the final outputs.
+- **Regression:** a bug in something that used to work. Tests exist mainly to catch regressions.
+- **Fixture:** something pytest prepares for a test. `tmp_path` is a fresh empty folder; `monkeypatch` changes a setting for one test and undoes it afterwards.
+- **Parametrize:** run the same test with several inputs: one test function, many cases.
 
-| Layer | What it checks | Speed | How many |
-|---|---|---|---|
-| **Unit tests** | One function, in isolation, with tiny hand-made data | milliseconds | many |
-| **Integration tests** | Stages working together (ingest → clean → validate) on small realistic files | seconds | some |
-| **End-to-end tests** | The whole pipeline on a sample dataset, checking final outputs | seconds–minutes | few |
-| **Data quality checks** | The *data* each production run (your Lab 03 validator) | per run | per run |
+---
 
-The last row is the data-engineering twist: **tests check code once per change; data quality checks check data on every run.** You need both — a bug-free pipeline fed garbage still produces garbage.
+## Steps
 
-### 3.2 Anatomy of a test: Arrange–Act–Assert
+### Step 1 — How pytest finds and runs tests
 
-Every good test has three visible parts:
+pytest is already installed (Lab 00). Its rules are simple:
+- It looks in files named `test_*.py` (ours: `tests\test_pipeline.py`).
+- It runs every function whose name starts with `test_`.
+- A test **passes** if it finishes, and **fails** if an `assert` is false or an error is raised. `assert x == y` is all you need; pytest shows both values when it fails.
+
+Always run it from the project root as **`python -m pytest`**. Like `python -m practice.x` in Lab 02, the `-m` form puts the project root on Python's import path, so `import pipeline` works from `tests\`.
+
+### Step 2 — Write the test file
+
+Create `tests\test_pipeline.py` with this content. The sections below explain it part by part.
 
 ```python
-def test_parse_salary_strips_symbols():
-    s = pd.Series(["$85,000.00"])        # Arrange: build tiny input
-    result = parse_salary(s)             # Act:     call the function
-    assert result.iloc[0] == 85000.0     # Assert:  verify the outcome
-```
+"""Unit tests for the ShopStream pipeline (run from the project root: python -m pytest -v)."""
+from unittest.mock import MagicMock, patch
 
-**Tiny, hand-made inputs are the point.** A test on 3 rows you constructed proves exactly one behavior and fails with an obvious cause. A test on the full 15,000-row file proves nothing specific and fails mysteriously.
-
-### 3.3 What to test (and what not to)
-
-Prioritize, in order:
-1. **Pure transformation functions** (`parse_salary`, `namespace_ids`, date parsing) — highest value per line of test.
-2. **Edge cases and past bugs** — empty input, all-null column, the weird value that once broke production. Every bug you fix gets a test so it can never return ("regression test").
-3. **The validator itself** — your quality gate must provably fire. An alarm you never tested is decoration.
-
-Don't bother testing: pandas itself (`read_csv` works), trivial getters, or exact log message wording. Test *your* logic.
-
-### 3.4 Fixtures and temporary directories
-
-Tests must be **independent and repeatable**: no test may depend on another's leftovers, on your real data folder, or on network access. pytest gives you `tmp_path` — a fresh temporary folder per test — so file-writing tests never touch real zones and clean up automatically.
-
----
-
-## 4. Step-by-Step Implementation
-
-All tests live in `pipeline/tests/`. Run everything from inside `pipeline\`.
-
-### Step 1 — First unit tests: the salary parser
-
-**What:** Create `tests/test_clean.py`:
-
-```python
+import numpy as np
 import pandas as pd
 import pytest
+import requests
 
-from hr_pipeline.clean import parse_salary, namespace_ids, parse_dates_multiformat
-
-
-class TestParseSalary:
-    def test_plain_number_passes_through(self):
-        assert parse_salary(pd.Series(["85000"])).iloc[0] == 85000.0
-
-    def test_dollar_sign_and_commas_stripped(self):
-        assert parse_salary(pd.Series(["$85,000.00"])).iloc[0] == 85000.0
-
-    def test_garbage_becomes_nan(self):
-        assert pd.isna(parse_salary(pd.Series(["N/A"])).iloc[0])
-
-    def test_empty_series_returns_empty(self):
-        assert len(parse_salary(pd.Series([], dtype="string"))) == 0
-
-    def test_negative_salary_preserved_for_validation_to_catch(self):
-        # cleaning parses; the VALIDATOR judges plausibility — separation of concerns
-        assert parse_salary(pd.Series(["-5000"])).iloc[0] == -5000.0
-```
-
-**Why these five:** one happy path, one realistic mess, one garbage input, one empty input, one *policy* case documenting a design decision (cleaning doesn't judge — validation does). Five tests, five distinct behaviors, each with a name that reads as a specification.
-
-**Run:**
-
-```powershell
-pytest tests\test_clean.py -v
-```
-
-**Expected output:** five green `PASSED` lines. `-v` shows each test name.
-
-**Common mistakes:**
-- Multiple unrelated asserts crammed into one test — when it fails you can't tell which behavior broke. One behavior per test.
-- Vague names (`test_1`, `test_salary`). The name should state the expected behavior; a failing test's name is the first diagnostic you read.
-
-**Troubleshooting:** `ModuleNotFoundError: hr_pipeline` → run pytest from inside `pipeline\`. If it persists, create `pipeline/pytest.ini` with:
-
-```ini
-[pytest]
-pythonpath = .
-```
-
-### Step 2 — Test IDs and dates
-
-**What:** Extend `tests/test_clean.py`:
-
-```python
-class TestNamespaceIds:
-    def test_prefix_and_zero_padding(self):
-        df = pd.DataFrame({"employee_id": ["1042"]})
-        assert namespace_ids(df, "GT")["employee_id"].iloc[0] == "GT-001042"
-
-    def test_original_dataframe_not_mutated(self):
-        df = pd.DataFrame({"employee_id": ["7"]})
-        namespace_ids(df, "GT")
-        assert df["employee_id"].iloc[0] == "7"   # caller's data untouched
+import pipeline
+from pipeline import (
+    DataQualityValidator,
+    align_schema,
+    deduplicate_customers,
+    ingest_crm_api,
+    standardize_emails,
+    standardize_names,
+    standardize_phone_numbers,
+    standardize_regions,
+    validate_emails,
+)
 
 
-class TestParseDatesMultiformat:
-    def test_three_formats_agree(self):
-        s = pd.Series(["2024-01-15", "01/15/2024", "15-Jan-2024"])
-        result = parse_dates_multiformat(s)
-        assert result.nunique() == 1
-        assert result.iloc[0] == pd.Timestamp("2024-01-15")
-
-    def test_unparseable_becomes_nat(self):
-        assert pd.isna(parse_dates_multiformat(pd.Series(["not a date"])).iloc[0])
-```
-
-**Why `test_original_dataframe_not_mutated` deserves special attention:** functions that silently modify their *input* cause the nastiest pandas bugs — a caller's DataFrame changes behind their back, and the symptom appears three modules away. This test pins the contract: our functions `copy()` and return. If someone later "optimizes" the copy away, this test catches it the same minute.
-
-**Run and verify:** `pytest -v` — all green.
-
-### Step 3 — Prove the quality gate fires
-
-**What:** Create `tests/test_validate.py`:
-
-```python
-import pandas as pd
-import pytest
-
-from hr_pipeline.validate import DataQualityValidator
+# ── Cleaning functions ────────────────────────────────────────────────────────
+def test_standardize_emails_trims_lowercases_and_removes_spaces():
+    raw = pd.Series(["  Maria@GMAIL.com ", "jo hn@yahoo.com"])
+    assert standardize_emails(raw).tolist() == ["maria@gmail.com", "john@yahoo.com"]
 
 
-def make_employees(**overrides) -> pd.DataFrame:
-    """Small helper: one valid employee row, tweakable per test."""
-    base = {
-        "employee_id": ["GT-000001"], "email": ["a@globaltech.com"],
-        "employment_type": ["Full-Time"], "salary_usd_annual": [90_000.0],
-    }
-    base.update(overrides)
-    return pd.DataFrame(base)
+def test_standardize_emails_turns_blanks_into_missing():
+    result = standardize_emails(pd.Series(["a@x.com", "", None, np.nan]))
+    assert result.iloc[0] == "a@x.com"
+    assert result.iloc[1:].isna().all()
 
 
-def test_valid_data_passes_all_checks():
-    report = (DataQualityValidator(make_employees(), "t")
-              .not_null("email").unique("employee_id")
-              .in_set("employment_type", {"Full-Time", "Part-Time", "Contractor"})
-              .report())
+@pytest.mark.parametrize("email, expected", [
+    ("customer1@yahoo.com", True),
+    ("missing@", False),
+    ("@nodomain.com", False),
+    ("double@@sign.com", False),
+    ("not-an-email", False),
+])
+def test_validate_emails(email, expected):
+    assert validate_emails(pd.Series([email])).iloc[0] == expected
+
+
+def test_validate_emails_treats_missing_as_invalid():
+    emails = standardize_emails(pd.Series(["a@x.com", None]))
+    assert validate_emails(emails).tolist() == [True, False]
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("+1 (555) 123-4567", "+15551234567"),
+    ("555.123.4567", "5551234567"),
+    ("+44 20 7946 0958", "+442079460958"),
+])
+def test_standardize_phone_numbers(raw, expected):
+    assert standardize_phone_numbers(pd.Series([raw])).iloc[0] == expected
+
+
+@pytest.mark.parametrize("raw", ["invalid-phone", "12345", None, ""])
+def test_standardize_phone_numbers_rejects_junk(raw):
+    assert pd.isna(standardize_phone_numbers(pd.Series([raw])).iloc[0])
+
+
+def test_standardize_names():
+    raw = pd.Series(["  maria  ", "o'brien", "anne   marie", None])
+    assert standardize_names(raw).tolist()[:3] == ["Maria", "O'Brien", "Anne Marie"]
+    assert pd.isna(standardize_names(raw).iloc[3])
+
+
+def test_standardize_regions_maps_variants_and_drops_unknowns():
+    raw = pd.Series(["usa", " Europe ", "EMEA", "Asia Pacific", "AP", "N/A", "mars"])
+    result = standardize_regions(raw)
+    assert result.tolist()[:5] == ["US", "EU", "EU", "APAC", "APAC"]
+    assert result.iloc[5:].isna().all()
+
+
+def test_align_schema_adds_missing_and_drops_extra_columns():
+    df = pd.DataFrame({"email": ["a@x.com"], "lifetime_value": [99.0], "source": ["crm"]})
+    result = align_schema(df, "crm")
+    assert list(result.columns) == ["email", "first_name", "last_name", "phone", "region",
+                                    "registration_date", "opt_out", "source"]
+    assert pd.isna(result.loc[0, "phone"])
+
+
+# ── Deduplication ─────────────────────────────────────────────────────────────
+def make_cleaned(rows):
+    """Build a small DataFrame shaped like clean_dataframe()'s output."""
+    df = pd.DataFrame(rows)
+    df["email_valid"] = validate_emails(df["email"])
+    return df
+
+
+def test_dedup_keeps_one_row_per_email_and_prefers_crm():
+    df = make_cleaned([
+        {"email": "a@x.com", "first_name": "Web", "phone": np.nan, "region": "EU",
+         "registration_date": pd.NaT, "opt_out": False, "source": "website"},
+        {"email": "a@x.com", "first_name": "Crm", "phone": np.nan, "region": np.nan,
+         "registration_date": pd.NaT, "opt_out": False, "source": "crm"},
+    ])
+    result = deduplicate_customers(df)
+    assert len(result) == 1
+    row = result.iloc[0]
+    assert row["first_name"] == "Crm"        # CRM has the highest priority...
+    assert row["region"] == "EU"             # ...but blanks are filled from other sources
+    assert row["source_count"] == 2
+
+
+def test_dedup_opt_out_from_any_source_wins():
+    """GDPR: one opt-out anywhere means the customer must not be emailed."""
+    df = make_cleaned([
+        {"email": "a@x.com", "first_name": "A", "opt_out": False, "source": "crm"},
+        {"email": "a@x.com", "first_name": "A", "opt_out": True, "source": "marketing"},
+    ])
+    assert bool(deduplicate_customers(df).iloc[0]["opt_out"]) is True
+
+
+def test_dedup_keeps_invalid_email_rows():
+    df = make_cleaned([
+        {"email": "a@x.com", "first_name": "A", "opt_out": False, "source": "crm"},
+        {"email": "missing@", "first_name": "B", "opt_out": False, "source": "website"},
+        {"email": "missing@", "first_name": "C", "opt_out": False, "source": "erp"},
+    ])
+    result = deduplicate_customers(df)
+    assert len(result) == 3                  # invalid emails are never merged
+    assert result["email"].tolist() == ["a@x.com", "missing@", "missing@"]
+
+
+def test_dedup_does_not_modify_its_input():
+    df = make_cleaned([{"email": "a@x.com", "first_name": "A", "opt_out": False, "source": "crm"}])
+    before = df.copy()
+    deduplicate_customers(df)
+    pd.testing.assert_frame_equal(df, before)
+
+
+# ── Validator ─────────────────────────────────────────────────────────────────
+def test_validator_pass_and_fail_against_threshold():
+    df = pd.DataFrame({"email": ["a@x.com"] * 19 + [None]})   # 95% complete
+    v = DataQualityValidator(df, threshold=0.95)
+    assert v.check_not_null("email", "")["status"] == "PASS"
+    v = DataQualityValidator(df, threshold=0.99)
+    assert v.check_not_null("email", "")["status"] == "FAIL"
+
+
+def test_validator_unique_counts_only_extra_copies():
+    df = pd.DataFrame({"email": ["a@x.com", "a@x.com", "a@x.com", "b@x.com", None]})
+    result = DataQualityValidator(df).check_unique("email", "")
+    assert (result["failed"], result["total"]) == (2, 4)
+
+
+# ── CRM API (no network: requests.get is replaced by a fake) ──────────────────
+def fake_page(customers, total_pages):
+    response = MagicMock()
+    response.json.return_value = {"customers": customers, "total_pages": total_pages}
+    return response
+
+
+def test_crm_api_reads_every_page_and_renames_columns():
+    pages = [fake_page([{"email": "a@x.com", "profile": {"first_name": "Ana"}}], 2),
+             fake_page([{"email": "b@x.com", "profile": {"first_name": "Ben"}}], 2)]
+    with patch("pipeline.requests.get", side_effect=pages) as get:
+        df = ingest_crm_api("https://crm.example/v2/customers", api_key="test-key")
+    assert get.call_count == 2
+    assert df["first_name"].tolist() == ["Ana", "Ben"]
+    assert (df["source"] == "crm").all()
+
+
+def test_crm_api_stops_on_server_error():
+    broken = MagicMock()
+    broken.raise_for_status.side_effect = requests.HTTPError("503 Server Error")
+    with patch("pipeline.requests.get", side_effect=[fake_page([{"email": "a@x.com"}], 2), broken]):
+        with pytest.raises(requests.HTTPError):
+            ingest_crm_api("https://crm.example/v2/customers", api_key="test-key")
+
+
+# ── End to end: the whole pipeline in a temporary folder ──────────────────────
+def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
+    monkeypatch.setitem(pipeline.CONFIG, "input_dir", tmp_path / "raw")
+    monkeypatch.setitem(pipeline.CONFIG, "output_dir", tmp_path / "processed")
+    for folder in ["raw", "processed"]:
+        (tmp_path / folder).mkdir()
+
+    pipeline.generate_synthetic_data()
+    pipeline.run_pipeline()
+
+    golden = pd.read_parquet(tmp_path / "processed" / "golden_customers.parquet")
+    assert len(golden) == 745
+    assert golden["opt_out"].dtype == bool
+    valid_emails = golden.loc[golden["email_valid"], "email"]
+    assert valid_emails.is_unique                    # dedup worked
+    report = pd.read_csv(tmp_path / "processed" / "quality_report.csv")
     assert (report["status"] == "PASS").all()
-
-
-def test_null_email_fails_not_null_check():
-    report = (DataQualityValidator(make_employees(email=[None]), "t")
-              .not_null("email").report())
-    assert report.loc[report["check"] == "not_null:email", "status"].iloc[0] == "FAIL"
-
-
-def test_duplicate_ids_fail_unique_check():
-    df = pd.concat([make_employees(), make_employees()], ignore_index=True)
-    report = DataQualityValidator(df, "t").unique("employee_id").report()
-    assert (report["status"] == "FAIL").any()
+    assert (tmp_path / "processed" / "customer_quality_report.png").exists()
 ```
 
-**Why:** the validator is your last line of defense — the code that decides whether data may be published. A bug here (a check that never fails) means garbage ships with a green checkmark, the worst possible outcome. So we test *both directions*: good data passes AND bad data fails. Testing only the happy path leaves your alarm untested.
+**What each section tests, and why:**
 
-The `make_employees` helper is a **test factory** — one place defines a valid record; each test overrides only what it's probing. When the schema grows a column, you update one function, not thirty tests.
+| Section | Tests | Why it matters |
+|---|---|---|
+| Cleaning functions | The exact examples from the guided lab docstrings and your Lab 03 practice: `+1 (555) 123-4567` → `+15551234567`, `"usa"` → `US`, `"missing@"` invalid... | These rules decide who gets emailed. `@pytest.mark.parametrize` runs one test function for each case, so adding a case is one line. |
+| `align_schema` | Missing columns are added and extra ones dropped | The contract between ingestion and cleaning: every source must arrive with the same 8 columns. |
+| Deduplication | One row per email; CRM wins; blanks filled from other sources; **an opt-out anywhere wins**; invalid emails never merged; input not modified | The business rules from Lab 03. `make_cleaned` builds a tiny DataFrame shaped like `clean_dataframe`'s output, small enough to check by eye. |
+| Validator | 95% passes at a 0.95 threshold and fails at 0.99; `UNIQUE` counts only the extra copies | The quality gate must be exactly as strict as documented. |
+| CRM API | Pages are followed and columns renamed; a 503 raises an error | Lab 05's offline checks, now automatic. `pytest.raises(requests.HTTPError)` *passes* only if that error is raised. |
+| End to end | The whole pipeline in a temporary folder gives 745 records, unique valid emails, all checks PASS, and a PNG | Proves the stages work **together**. |
 
-### Step 4 — Integration test with `tmp_path`
+**How the end-to-end test stays isolated:** `monkeypatch.setitem(pipeline.CONFIG, "input_dir", tmp_path / "raw")` points the pipeline at a fresh temporary folder for this one test, and is undone afterwards. Your real `data\raw` and `data\processed` are never touched. This works only because every function reads its folders from `CONFIG` instead of hard-coding them, one more reason for the config dictionary from Lab 02.
 
-**What:** Create `tests/test_integration.py`:
-
-```python
-"""Ingest -> clean -> validate on a tiny file, in a temp folder."""
-import pandas as pd
-
-from hr_pipeline import ingest, clean
-
-
-def test_csv_roundtrip_through_cleaning(tmp_path):
-    # Arrange: write a small raw file into an isolated temp folder
-    raw = tmp_path / "hris.csv"
-    raw.write_text(
-        "employee_id,first_name,last_name,email,employment_type,hire_date\n"
-        "1042,Ada,Lovelace,ada@globaltech.com,FT,2023-05-01\n"
-        "7,Grace,Hopper,grace@globaltech.com,full time,2022-11-15\n",
-        encoding="utf-8",
-    )
-
-    # Act: run the real stages
-    df = ingest.ingest_hris_csv(raw)
-    df = clean.namespace_ids(df, "GT")
-    df["employment_type"] = clean.standardize_employment_type(df["employment_type"])
-
-    # Assert: end state is what the next stage expects
-    assert list(df["employee_id"]) == ["GT-001042", "GT-000007"]
-    assert set(df["employment_type"]) == {"Full-Time"}
-    assert str(df["hire_date"].dtype) == "datetime64[ns]"
-```
-
-**Why:** unit tests prove each part; integration tests prove the *joints* — that ingest's output shape is what clean expects. Most real breakage lives in the joints (a renamed column, a dtype change). `tmp_path` keeps the test hermetic: no dependence on your real `data/raw`, no cleanup code, runs identically on any machine — which is what makes it CI-ready.
-
-**Run the whole suite:**
+### Step 3 — Run the tests
 
 ```powershell
-pytest -v
+python -m pytest -v
 ```
 
-**Expected output:** every test green, total runtime well under 10 seconds. That speed is a feature: fast suites get run; slow ones get skipped.
+**Expected output** (about 30–60 seconds; the end-to-end test runs the whole pipeline, and its log lines are hidden unless a test fails):
 
-### Step 5 — Break something on purpose
+```
+============================= test session starts =============================
+platform win32 -- Python 3.12.x, pytest-8.x.x, pluggy-1.x.x -- C:\DataEngineering\sk01\.venv\Scripts\python.exe
+rootdir: C:\DataEngineering\sk01
+collected 27 items
 
-**What:** In `clean.py`, "accidentally" change the zero-padding from 6 to 5 (`zfill(5)`). Run `pytest`. Watch `test_prefix_and_zero_padding` fail with a precise diff. Revert. Green again.
+tests/test_pipeline.py::test_standardize_emails_trims_lowercases_and_removes_spaces PASSED [  3%]
+tests/test_pipeline.py::test_standardize_emails_turns_blanks_into_missing PASSED [  7%]
+tests/test_pipeline.py::test_validate_emails[customer1@yahoo.com-True] PASSED [ 11%]
+tests/test_pipeline.py::test_validate_emails[missing@-False] PASSED      [ 14%]
+tests/test_pipeline.py::test_validate_emails[@nodomain.com-False] PASSED [ 18%]
+tests/test_pipeline.py::test_validate_emails[double@@sign.com-False] PASSED [ 22%]
+tests/test_pipeline.py::test_validate_emails[not-an-email-False] PASSED  [ 25%]
+tests/test_pipeline.py::test_validate_emails_treats_missing_as_invalid PASSED [ 29%]
+tests/test_pipeline.py::test_standardize_phone_numbers[+1 (555) 123-4567-+15551234567] PASSED [ 33%]
+tests/test_pipeline.py::test_standardize_phone_numbers[555.123.4567-5551234567] PASSED [ 37%]
+tests/test_pipeline.py::test_standardize_phone_numbers[+44 20 7946 0958-+442079460958] PASSED [ 40%]
+tests/test_pipeline.py::test_standardize_phone_numbers_rejects_junk[invalid-phone] PASSED [ 44%]
+tests/test_pipeline.py::test_standardize_phone_numbers_rejects_junk[12345] PASSED [ 48%]
+tests/test_pipeline.py::test_standardize_phone_numbers_rejects_junk[None] PASSED [ 51%]
+tests/test_pipeline.py::test_standardize_phone_numbers_rejects_junk[] PASSED [ 55%]
+tests/test_pipeline.py::test_standardize_names PASSED                    [ 59%]
+tests/test_pipeline.py::test_standardize_regions_maps_variants_and_drops_unknowns PASSED [ 62%]
+tests/test_pipeline.py::test_align_schema_adds_missing_and_drops_extra_columns PASSED [ 66%]
+tests/test_pipeline.py::test_dedup_keeps_one_row_per_email_and_prefers_crm PASSED [ 70%]
+tests/test_pipeline.py::test_dedup_opt_out_from_any_source_wins PASSED   [ 74%]
+tests/test_pipeline.py::test_dedup_keeps_invalid_email_rows PASSED       [ 77%]
+tests/test_pipeline.py::test_dedup_does_not_modify_its_input PASSED      [ 81%]
+tests/test_pipeline.py::test_validator_pass_and_fail_against_threshold PASSED [ 85%]
+tests/test_pipeline.py::test_validator_unique_counts_only_extra_copies PASSED [ 88%]
+tests/test_pipeline.py::test_crm_api_reads_every_page_and_renames_columns PASSED [ 92%]
+tests/test_pipeline.py::test_crm_api_stops_on_server_error PASSED        [ 96%]
+tests/test_pipeline.py::test_full_pipeline_end_to_end PASSED             [100%]
 
-**Why:** this rehearsal is the entire value proposition of testing compressed into one minute — a change that would have silently corrupted every downstream join was caught in seconds, named by a test whose title told you exactly what broke. Also verify your suite *can* fail; a suite that passes when the code is wrong is worse than no suite.
+============================= 27 passed in 50.53s =============================
+```
 
-### Step 6 — Package for handover
+`-v` (verbose) lists every test. Each parametrized case appears separately with its input in brackets, e.g. `[missing@-False]`. Without `-v` you just get one dot per passing test.
 
-**What:** Final packaging checklist — make the `pipeline/` folder deliverable:
+✅ **Checkpoint:** `27 passed`.
 
-1. **`requirements.txt`** — pin what the pipeline needs:
+### Step 4 — Watch a test catch the GDPR bug
 
-   ```powershell
-   pip freeze | Select-String "pandas|openpyxl|lxml|pyarrow|rapidfuzz|pyyaml|python-dotenv|pytest" > requirements.txt
-   ```
+Repeat the Lab 03 experiment, but this time with a safety net. In `pipeline.py`, inside `merge_group`, comment out the 2 opt-out lines:
 
-   A new machine then reproduces your environment with `pip install -r requirements.txt`. Without this file, "works on my machine" is the best anyone can say.
+```python
+        # if "opt_out" in group.columns:
+        #     best["opt_out"] = group["opt_out"].fillna(0).astype(bool).any()
+```
 
-2. **README.md** — update Lab 04's README with: prerequisites (Python version), setup (`python -m venv`, activate, `pip install -r requirements.txt`, copy `.env.example` → `.env`), how to run, **how to run the tests**, outputs and their consumers, known limitations.
+Run the tests, skipping the slow end-to-end test with `-k` (only tests whose names match the expression run):
 
-3. **Structure sweep** — the deliverable now looks like:
+```powershell
+python -m pytest -q -k "not end_to_end"
+```
 
-   ```
-   pipeline/
-   ├── hr_pipeline/          # source package
-   ├── tests/                # test suite
-   ├── config/pipeline.yaml  # behavior knobs
-   ├── data/raw/             # inputs (immutable)
-   ├── logs/                 # run history (gitignored)
-   ├── output/               # deliverables (gitignored)
-   ├── run_pipeline.py       # entry point
-   ├── requirements.txt      # reproducible environment
-   ├── .env.example          # documented secrets (committed)
-   ├── .gitignore
-   └── README.md
-   ```
+**Expected output:**
 
-4. **The clean-machine test (thought experiment made real):** delete your venv (`Remove-Item -Recurse .venv` from the module root — it's fully regenerable), recreate it, `pip install -r requirements.txt`, run `pytest`, run the pipeline. If all three succeed, your handover is real. This is exactly what the client's engineer will do on day one.
+```
+...................F......                                               [100%]
+================================== FAILURES ===================================
+___________________ test_dedup_opt_out_from_any_source_wins ___________________
 
-**Verify:** all tests pass and the pipeline runs from the freshly rebuilt environment. That's the definition of done.
+    def test_dedup_opt_out_from_any_source_wins():
+        """GDPR: one opt-out anywhere means the customer must not be emailed."""
+        df = make_cleaned([
+            {"email": "a@x.com", "first_name": "A", "opt_out": False, "source": "crm"},
+            {"email": "a@x.com", "first_name": "A", "opt_out": True, "source": "marketing"},
+        ])
+>       assert bool(deduplicate_customers(df).iloc[0]["opt_out"]) is True
+E       assert False is True
+E        +  where False = bool(np.False_)
+
+tests\test_pipeline.py:115: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_pipeline.py::test_dedup_opt_out_from_any_source_wins - asse...
+1 failed, 25 passed, 1 deselected in 30.62s
+```
+
+The failure names the rule (the test's name and docstring), shows the exact line, and shows the value it got. In Lab 03 this bug was silent. Now it can't reach production unnoticed. **Undo the change** and confirm `python -m pytest -q` is all green again.
+
+> **The habit:** whenever you fix a bug, first write a test that fails because of it, then fix the code so the test passes. The bug can never quietly come back.
+
+✅ **Checkpoint:** you saw the failure, restored the code, and all 27 tests pass.
+
+### Step 5 — Package the project for handover
+
+**1. Pin the environment.** Re-create `requirements.txt` so it lists exactly what the pipeline was tested with:
+
+```powershell
+python -m pip freeze > requirements.txt
+```
+
+**2. Ignore what shouldn't be shared.** Create `.gitignore` in the project root:
+
+```
+.venv/
+__pycache__/
+.pytest_cache/
+logs/
+data/raw/
+data/processed/
+practice/
+```
+
+Generated data and outputs can be re-created by running the pipeline, the venv by `requirements.txt`, and logs are per-machine. Real customer data must **never** go into Git.
+
+**3. Write `README.md`** in the project root. It's for the engineer who takes over at 2 a.m.:
+
+````markdown
+# ShopStream Customer Data Quality Pipeline
+
+Ingests customers from 4 sources (website CSV, CRM JSON/API, ERP fixed-width, marketing Excel),
+cleans and deduplicates them, runs 7 quality checks, and delivers golden customer files.
+
+## Setup (Windows, Python 3.12)
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    python -m pip install -r requirements.txt
+
+## Run
+    python pipeline.py
+First run generates test data in data\raw\. Outputs in data\processed\:
+golden_customers.parquet, golden_customers.csv, quality_report.csv, customer_quality_report.png.
+Log: logs\pipeline.log. Exit code 0 = success.
+
+## Configuration
+Settings are in CONFIG at the top of pipeline.py.
+Secrets come from environment variables: CRM_API_KEY (CRM API), ANTHROPIC_API_KEY (optional AI step).
+
+## Tests
+    python -m pytest -v
+
+## Key rules
+- Source priority: CRM > website > ERP > marketing.
+- An opt-out in ANY source makes the golden record opted out (GDPR).
+- Each quality check must pass for at least 95% of records.
+````
+
+**4. Final check, as the next engineer would.** Close every window, open a **new** PowerShell, and follow your README word for word:
+
+```powershell
+cd C:\DataEngineering\sk01
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pytest -q
+python pipeline.py
+```
+
+**Expected:** pip reports `Requirement already satisfied` for everything, the tests show `27 passed`, and the pipeline ends with `PIPELINE COMPLETE`, 745 golden records and 7/7 checks.
+
+✅ **Checkpoint:** a fresh window plus only the README is enough to set up, test and run.
+
+### Step 6 — Final project check against the guided lab
+
+Your project should now look like this:
+
+```
+C:\DataEngineering\sk01\
+├── pipeline.py                 # every code block of the guided lab, Parts 1–8
+├── tests\test_pipeline.py      # 27 tests
+├── requirements.txt
+├── README.md
+├── .gitignore
+├── practice\                   # your Lab 01–05 learning scripts
+├── data\raw\                   # 4 generated source files
+├── data\processed\             # golden_customers.parquet/.csv, quality_report.csv, customer_quality_report.png
+└── logs\pipeline.log
+```
+
+You have now built everything in the [SK-01 End-to-End Guided Lab](../Labs/SK-01_End_to_End_Guided_Lab.md). Work through its **Reflection Questions**. Labs 03 and 05 covered Q1–Q2 and Q4–Q5, and Q3 (sending customer data to an LLM) is worth discussing with your mentor.
 
 ---
 
-## 5. Production Engineering Practices Introduced in This Lab
+## Troubleshooting
 
-| Practice | Why it matters |
-|---|---|
-| **Unit tests on pure transforms, tiny hand-made inputs** | Regressions caught in milliseconds, failures self-explanatory. |
-| **Testing the alarm (validator fails on bad data)** | An untested quality gate is decoration; test both directions. |
-| **Non-mutation tests** | Pins the "copy, don't mutate" contract that prevents pandas' nastiest bug class. |
-| **Test factories** | Schema changes touch one helper, not every test. |
-| **Hermetic integration tests via `tmp_path`** | No shared state, no cleanup, CI-ready. |
-| **Break-it rehearsal** | Proves the suite can fail — and shows you its value viscerally. |
-| **`requirements.txt` + clean-machine rebuild** | Reproducibility: the difference between a deliverable and a demo. |
-| **Tests documented in the README** | Testing evidence is a contractual deliverable in client work. |
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'pipeline'` | Ran `pytest` instead of `python -m pytest`, or from inside `tests\` | `cd C:\DataEngineering\sk01`, then `python -m pytest` |
+| `collected 0 items` | File or functions not named `test_*` | `tests\test_pipeline.py`, functions start with `test_` |
+| End-to-end test gives a count other than 745 | `generate_synthetic_data` differs from the guided lab, or numpy's seed was changed | Re-copy guided lab Step 1.2 |
+| End-to-end test overwrote your real outputs | `monkeypatch.setitem` lines missing | The test must point `input_dir`/`output_dir` at `tmp_path` |
+| `KeyError: 'email_valid'` in a dedup test | The test DataFrame is missing a column `deduplicate_customers` needs | Use `make_cleaned`, which adds `email_valid` |
+| Tests pass but the pipeline fails | Tests don't cover the broken part | Add a test that reproduces the failure, then fix it |
+| `.ps1` activation blocked in the new window | Execution policy | See Lab 00 troubleshooting |
 
 ---
 
-## 6. Reflection
+## Key takeaways
 
-### What you learned
-The data engineering testing pyramid; Arrange–Act–Assert; unit tests for transforms, both-direction tests for the quality gate, hermetic integration tests; and packaging (requirements, README, clean-machine verification) that makes the pipeline a genuine handover artifact.
+- Test the business rules (opt-out wins, CRM priority, the 95% threshold), not just "it runs". The most dangerous bugs don't crash.
+- Keep unit tests small and readable; use `parametrize` for many cases, mocks for APIs, and `tmp_path` + `monkeypatch` to isolate end-to-end runs.
+- Every bug fix starts with a test that fails because of it.
+- Handover = pinned `requirements.txt` + a README that a stranger can follow + a `.gitignore` that keeps data and secrets out of Git.
+- Settings in one `CONFIG` dictionary made the pipeline testable. Good design and testability go together.
 
-### Why it matters
-Tests are what let code change safely for years, and testing evidence is what clients and employers demand before accepting delivery. You now have both — plus a complete, production-shaped pipeline: modular, zoned, logged, configured, secret-safe, retrying, idempotent, validated, tested, documented. That is the exact standard the capstone will hold you to.
+---
 
-### Interview questions (with model answers)
+## Next
 
-1. **"How do you test a data pipeline?"**
-   Two complementary layers: *code tests* (pytest — units on transformation functions, integration across stages with temp dirs, run per change) and *data quality checks* (rule-based validation with a gate, run on every pipeline execution). Code tests catch regressions; data checks catch bad inputs.
-
-2. **"What makes a good unit test?"**
-   Tests one behavior, on tiny constructed input, with a name that states the expectation, independent of other tests and external state, and fast enough that nobody hesitates to run the suite.
-
-3. **"How do you test error paths?"**
-   Deliberately construct the failure — null columns, duplicate IDs, malformed values — and assert the system responds as designed (check FAILs, exception raised, record quarantined). Also `pytest.raises` for exception contracts.
-
-4. **"A bug made it to production. What do you do after fixing it?"**
-   Write a regression test that reproduces the bug and fails on the old code, so it can never silently return. Over time the suite becomes a museum of everything that ever went wrong — and a guarantee none of it recurs.
-
-5. **"What's in your requirements.txt and why pin versions?"**
-   Direct dependencies with versions. Pinning makes environments reproducible — without it, a fresh install six months later pulls newer libraries and behavior drifts. (Mention lock files / `pip-tools` as the next maturity step.)
-
-6. **"How would you know your validation logic itself is correct?"**
-   Test it in both directions: known-good data must pass every check, and each specific defect must trip its specific check. The gate is code; code needs tests.
-
-### Common interview traps
-- "I test by running it and checking the output" — that's manual testing; the question is about automation.
-- Conflating code tests with data quality checks — naming both, and when each runs, marks you as experienced.
-- Claiming 100% coverage as the goal. Coverage of *critical transforms and the gate* is the goal; chasing a number produces junk tests.
-
-### Key takeaways
-1. Test the transforms, test the joints, and above all test the alarm.
-2. Tiny hand-made inputs; one behavior per test; names that read as specs.
-3. Every fixed bug becomes a regression test.
-4. Reproducibility (requirements + README + clean-machine run) turns your project into a deliverable.
-
-**Next:** you're ready for the [capstone project](../Project/01_Business_Scenario.md) — a full client engagement that uses everything from Labs 00–06.
+Back to the [SK-01 End-to-End Guided Lab](../Labs/SK-01_End_to_End_Guided_Lab.md): you've built and tested the complete ShopStream pipeline. Compare your `pipeline.py` with the guided lab once more and answer its reflection questions. Then continue to the SK-01 capstone project in `Project\`.

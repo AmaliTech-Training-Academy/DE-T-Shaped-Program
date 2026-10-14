@@ -1,432 +1,294 @@
 # Lab 00 — Environment Setup
 
-> **Goal:** by the end of this lab you will have a complete, professional Python data engineering
-> workstation on Windows 11: Python installed, a project folder, a virtual environment with pandas,
-> and VS Code configured — and you will understand *why* each piece exists.
+> **Goal:** Set up a professional Python data engineering workstation on Windows 11: Python, a project folder, a virtual environment with every library the ShopStream pipeline needs, and VS Code. You will also learn *why* each piece exists.
 >
-> **Time:** 2–3 hours. **Prerequisites:** none. A Windows 11 laptop where you can install software.
+> **Time:** 1.5–2 hours | **Difficulty:** Beginner | **Prerequisites:** A Windows 11 laptop where you can install software. No coding experience needed.
+>
+> **Guided lab coverage:** [SK-01 End-to-End Guided Lab](../Labs/SK-01_End_to_End_Guided_Lab.md) — *Prerequisites* and the project folder used from *Part 1* onward.
 
 ---
 
-## 1. Environment Setup
+## How the SK-01 Granular Labs fit together
 
-This entire lab *is* environment setup, so this section is the main event. Later labs will only
-verify this setup and add one or two new packages.
+The SK-01 guided lab has you build a customer data pipeline for **ShopStream**, an e-commerce company. The pipeline reads customer data from 4 systems, cleans it, removes duplicates, checks quality and delivers a "golden" customer file for a marketing campaign. It is one Python file, `pipeline.py`, of about 1,000 lines.
 
-### 1.1 What we're installing, and why
+That is a lot for a beginner. These granular labs take you there in small steps:
+
+| Lab | You learn | You add to `pipeline.py` (guided lab part) |
+|---|---|---|
+| 00 (this lab) | Python, venv, packages, VS Code | — (setup) |
+| 01 | Core Python on ShopStream values: strings, lists, dicts, sets, functions, regex, JSON | — (practice scripts only) |
+| 02 | pandas: reading CSV, JSON, fixed-width and Excel files | Parts 1–2 (setup, test data, ingestion) |
+| 03 | Cleaning, deduplication and quality checks | Parts 3–5 |
+| 04 | Turning the functions into a pipeline that runs end to end | Parts 7–8 (chart, export, `run_pipeline`) |
+| 05 | Logging, errors, secrets, re-runs, the CRM API | Part 6 and reflection Q4–Q5 |
+| 06 | Automated tests and handover | Tests for everything above |
+
+When you finish Lab 06, your `pipeline.py` is the guided lab's pipeline, and you will understand every line of it.
+
+---
+
+## Learning objectives
+
+By the end of this lab you can:
+
+1. Install Python 3.12 and check that the right version runs.
+2. Explain what a virtual environment is, and create and activate one.
+3. Install packages with `python -m pip` and record them in `requirements.txt`.
+4. Create the SK-01 project folder layout.
+5. Point VS Code at your virtual environment and run a script from its terminal.
+
+---
+
+## What we're installing, and why
 
 | Tool | What it is | Why a data engineer needs it |
 |---|---|---|
-| **Python 3.12+** | A programming language and its interpreter (the program that runs your code) | The de facto standard language for data pipelines |
+| **Python 3.12** (3.11+ is fine) | A programming language, and the interpreter program that runs it | The standard language for data pipelines |
 | **pip** | Python's package installer (comes with Python) | Installs libraries like pandas |
-| **venv** | Python's built-in virtual environment tool | Keeps each project's libraries isolated so projects don't break each other |
-| **pandas** | A Python library for tabular data | The workhorse for reading, transforming, and writing data files |
-| **VS Code** | A free code editor from Microsoft | Where you'll write and debug code; the most common editor in industry |
-| **Windows Terminal / PowerShell** | Your command line | Pipelines are run and automated from the command line, not by clicking |
+| **venv** | Python's built-in virtual environment tool | Keeps each project's libraries separate, so projects don't break each other |
+| **pandas** and friends | Libraries for tables, charts, files and web requests | The tools the ShopStream pipeline is built with |
+| **VS Code** | A free code editor from Microsoft | Where you write and debug code |
+| **PowerShell** | Windows' command line | Pipelines are run and scheduled from the command line, not by clicking |
 
-**Term: command line / terminal / shell.** A text window where you type commands instead of
-clicking. PowerShell is Windows' built-in shell. Data engineers live here because anything you can
-type can be *automated* — and automation is the whole job.
+**Term: command line / terminal / shell.** A text window where you type commands instead of clicking. PowerShell is Windows' built-in shell. Anything you can type can be *automated*, and automation is the core of the job.
 
-### 1.2 Step-by-step installation
+---
 
-#### Step 1 — Open PowerShell
+## Steps
 
-Press the **Windows key**, type `powershell`, press **Enter**. You'll see a blue/black window with
-a prompt like:
+### Step 1 — Open PowerShell
+
+Press the **Windows key**, type `powershell`, press **Enter**. You'll see a prompt like:
 
 ```
 PS C:\Users\YourName>
 ```
 
-That `PS C:\...>` is the **prompt** — it means "type a command here." The path shows your
-**current working directory** (the folder commands operate in by default).
+`PS C:\...>` is the **prompt**: type a command here. The path is your **current working directory** (the folder commands work in by default).
 
-> **macOS/Linux note:** use the built-in Terminal app; commands differ slightly and are noted
-> where relevant.
+> **macOS/Linux:** use the Terminal app. Use `python3` where these labs say `python`, `source .venv/bin/activate` to activate, and `/` instead of `\` in paths.
 
-#### Step 2 — Check whether Python is already installed
-
-Type this and press Enter:
+### Step 2 — Check whether Python is already installed
 
 ```powershell
 python --version
 ```
 
-**Expected output (good):** something like `Python 3.12.4` (any 3.11+ is fine).
+**Expected output (good):** `Python 3.12.x` (any 3.11 or newer is fine). Skip to Step 4.
 
-**Possible bad outcomes:**
-- The **Microsoft Store opens** or you see nothing: Windows ships a fake `python` alias.
-  Continue to Step 3 to install the real thing.
-- `python : The term 'python' is not recognized...`: Python isn't installed. Continue to Step 3.
-- A version older than 3.11 (e.g., `Python 3.8.x`): install a current version in Step 3.
+**Other outcomes:**
+- The **Microsoft Store opens**, or nothing prints: Windows has a placeholder `python` command. Go to Step 3.
+- `python : The term 'python' is not recognized...`: Python isn't installed. Go to Step 3.
+- A version older than 3.11 (e.g. `Python 3.8.10`): install a current one in Step 3.
 
-#### Step 3 — Install Python
+### Step 3 — Install Python
 
-1. Go to <https://www.python.org/downloads/> in your browser.
-2. Click the big yellow **Download Python 3.x.x** button (latest stable — the site always offers
-   the current recommended version; if unsure which is "latest stable", it's the one that button gives you).
-3. Run the downloaded installer. **On the first screen, CHECK the box "Add python.exe to PATH."**
-   This is the single most common setup mistake — if you skip it, PowerShell won't find Python.
-4. Click **Install Now** and wait.
-5. At the end, if you see **"Disable path length limit"**, click it (it lets Windows handle long
-   file paths; harmless and helpful).
+1. Go to <https://www.python.org/downloads/windows/> and download the latest **Python 3.12** "Windows installer (64-bit)". (3.13 also works; 3.12 is what these labs were tested on.)
+2. Run the installer. **On the first screen, tick "Add python.exe to PATH".** Skipping this box is the most common setup mistake.
+3. Click **Install Now** and wait.
+4. If the last screen offers **"Disable path length limit"**, click it. It lets Windows handle long file paths.
 
-**Term: PATH.** An environment variable — a list of folders Windows searches when you type a
-command. "Add to PATH" means "let me type `python` from anywhere."
+**Term: PATH.** A list of folders Windows searches when you type a command. "Add to PATH" means you can type `python` from any folder.
 
-**Verify.** Close PowerShell completely (PATH changes only apply to new windows), open a fresh
-one, and run:
+Close PowerShell completely (PATH changes only reach new windows), open a new one, and run:
 
 ```powershell
 python --version
-pip --version
+python -m pip --version
 ```
 
-Expected:
+**Expected output:**
 
 ```
-Python 3.12.4
+Python 3.12.x
 pip 24.x from C:\Users\YourName\AppData\Local\Programs\Python\Python312\Lib\site-packages\pip (python 3.12)
 ```
 
-> **macOS:** `brew install python` (or python.org installer) then use `python3` / `pip3`.
-> **Linux:** usually preinstalled; `sudo apt install python3 python3-venv python3-pip`.
+✅ **Checkpoint:** both commands print a version, and Python is 3.11 or newer.
 
-**Troubleshooting**
+### Step 4 — Create the project folder
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| Microsoft Store opens when you type `python` | Windows "app execution alias" shadowing real Python | Settings → Apps → Advanced app settings → App execution aliases → turn **off** both `python.exe` and `python3.exe` entries, reopen PowerShell |
-| `'python' is not recognized` after install | Forgot "Add to PATH", or old PowerShell window | Re-run installer → Modify → check "Add python to environment variables"; open a NEW PowerShell |
-| `pip` not recognized but `python` works | pip not on PATH | Use `python -m pip --version` instead — `python -m pip` always works and is the professional habit anyway |
-
-#### Step 4 — Create your module project folder
-
-We'll keep all SK-01 work in one predictable place. In PowerShell:
+All SK-01 work lives in one folder: `C:\DataEngineering\sk01`. This is the project root used by the guided lab.
 
 ```powershell
 mkdir C:\DataEngineering\sk01
 cd C:\DataEngineering\sk01
+mkdir data\raw, data\processed, logs, practice, tests
 ```
 
-`mkdir` creates a folder; `cd` ("change directory") moves you into it. Your prompt should now read
-`PS C:\DataEngineering\sk01>`.
+`mkdir` creates folders; `cd` ("change directory") moves into one. Your prompt should now read `PS C:\DataEngineering\sk01>`.
 
-Now create the standard subfolders a data project uses:
+> **Why not a OneDrive or Desktop folder?** OneDrive syncs files while your pipeline is writing them. That can lock a file mid-write and crash the run with `PermissionError`. Keep pipeline projects in a plain local folder like `C:\DataEngineering`.
 
-```powershell
-mkdir data\raw, data\processed, data\rejected, logs, src, tests, notebooks
-```
-
-**Why this structure?** This is a scaled-down version of what real pipeline repositories look like:
+What each folder is for:
 
 ```
 C:\DataEngineering\sk01\
 ├── data\
-│   ├── raw\          # incoming source files — NEVER edited by hand
-│   ├── processed\    # pipeline outputs
-│   └── rejected\     # bad records quarantined for review ("dead letters")
-├── logs\             # log files the pipeline writes
-├── src\              # your Python source code
+│   ├── raw\          # the 4 ShopStream source files (Lab 02 generates them). Never edited by hand.
+│   └── processed\    # pipeline outputs: golden_customers.parquet/.csv, quality report, chart
+├── logs\             # pipeline.log, written by the pipeline (Lab 05)
+├── practice\         # small learning scripts from Labs 01–05
 ├── tests\            # automated tests (Lab 06)
-├── notebooks\        # exploratory scratch work
-└── .venv\            # virtual environment (created next)
+├── pipeline.py       # the ShopStream pipeline (you start it in Lab 02)
+└── .venv\            # the virtual environment (next step)
 ```
 
-The golden rule you'll hear all module: **raw data is immutable** — you never modify source files,
-you only read them and write new outputs. If your pipeline has a bug, you fix the code and re-run
-against the untouched raw files.
+The golden rule for the whole module: **raw data is read-only.** You never change source files. You read them and write new outputs. If the pipeline has a bug, you fix the code and run it again on the untouched raw files.
 
-**Verify:**
+✅ **Checkpoint:** `tree` shows `data\raw`, `data\processed`, `logs`, `practice` and `tests`.
 
-```powershell
-tree /F
-```
+### Step 5 — Create and activate a virtual environment
 
-Expected: the folder tree above (minus `.venv`, which comes next).
+**Term: virtual environment (venv).** A private copy of Python with its own package folder, inside your project. Without one, every project on your laptop shares one set of packages. The day one project needs pandas 2.x and an older one needs 1.x, one of them breaks.
 
-#### Step 5 — Create and activate a virtual environment
-
-**Term: virtual environment (venv).** A private copy of Python + its own package folder, living
-inside your project. Without one, every project shares one global package set — and the day
-Project A needs pandas 2.x while old Project B needs 1.x, one of them breaks. Every professional
-Python project uses an isolated environment. Alternatives exist (conda, Poetry, uv) but `venv`
-ships with Python and is all we need.
-
-From inside `C:\DataEngineering\sk01`:
+From `C:\DataEngineering\sk01`:
 
 ```powershell
 python -m venv .venv
-```
-
-This takes ~10 seconds and creates a `.venv` folder. (`python -m venv` means "run the venv module";
-`.venv` is the conventional name.)
-
-**Activate it:**
-
-```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-**Expected:** your prompt gains a green prefix:
+The first line creates a `.venv` folder (about 10 seconds). The second line activates it.
+
+**Expected:** your prompt gains a prefix:
 
 ```
 (.venv) PS C:\DataEngineering\sk01>
 ```
 
-That `(.venv)` means: `python` and `pip` now refer to *this project's* private environment.
+`(.venv)` means `python` now refers to *this project's* environment.
 
-> **macOS/Linux:** `source .venv/bin/activate`
+**You must activate in every new PowerShell window.** If a package "suddenly isn't installed", check for `(.venv)` first. `deactivate` turns it off.
 
-**Troubleshooting**
+✅ **Checkpoint:** `python -c "import sys; print(sys.prefix)"` prints a path ending in `sk01\.venv`.
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `...Activate.ps1 cannot be loaded because running scripts is disabled` | PowerShell's default execution policy blocks scripts | Run once: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`, answer `Y`, then activate again. This allows locally created scripts — a standard, safe developer setting. |
-| No `(.venv)` prefix appears | Activation silently failed or wrong path | Confirm you're in `C:\DataEngineering\sk01` (`pwd`), confirm `.venv\Scripts\Activate.ps1` exists (`ls .venv\Scripts`) |
-| `python -m venv .venv` errors about missing venv | Rare on Windows; common on Linux | Linux: `sudo apt install python3-venv` |
-
-**Deactivating:** type `deactivate` any time. **Re-activating:** you must run the `Activate.ps1`
-line in every new PowerShell window before working. Forgetting to activate is the #1 beginner
-mistake — if pandas "suddenly isn't installed," check for the `(.venv)` prefix first.
-
-#### Step 6 — Install pandas and friends
+### Step 6 — Install the pipeline's libraries
 
 With the venv **active**:
 
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install pandas pyarrow openpyxl
+python -m pip install "pandas>=2.2,<3" numpy matplotlib seaborn requests openpyxl pyarrow pytest
 ```
 
-What each package is for:
-- **pandas** — tabular data manipulation (the module's core tool)
-- **pyarrow** — lets pandas read/write **Parquet**, the compressed columnar format used in
-  production (explained properly in Lab 02)
-- **openpyxl** — lets pandas read Excel `.xlsx` files (you'll need it for the capstone's payroll file)
+| Package | Used for | First used |
+|---|---|---|
+| `pandas` | Tables (DataFrames): read, clean, combine, write | Lab 02 |
+| `numpy` | Numbers and the `np.nan` "missing" value pandas uses | Lab 02 |
+| `openpyxl` | Lets pandas read Excel `.xlsx` files (the marketing source) | Lab 02 |
+| `pyarrow` | Lets pandas write **Parquet**, a compressed file format for analytics | Lab 02 |
+| `matplotlib`, `seaborn` | The 6-chart quality report image | Lab 04 |
+| `requests` | Calling web APIs (the CRM API) | Lab 05 |
+| `pytest` | Automated tests | Lab 06 |
 
-**Expected output:** several `Successfully installed ...` lines. Warnings in yellow are fine;
-red `ERROR` lines are not.
+`"pandas>=2.2,<3"` asks for pandas 2.2 or newer, but not 3.x. The guided lab needs 2.2+ features, and these labs were tested on pandas 2.2 and 2.3. The quotes stop PowerShell from treating `>` and `<` as redirection.
 
-**Verify:**
+**Why `python -m pip` and not `pip`?** It makes sure pip installs into the Python you are running, which is your venv's.
+
+**Expected:** several `Successfully installed ...` lines. Yellow warnings are fine; red `ERROR` lines are not.
+
+Verify:
 
 ```powershell
-python -c "import pandas as pd; print(pd.__version__)"
+python -c "import pandas, matplotlib, seaborn, openpyxl, pyarrow, requests; print('pandas', pandas.__version__)"
 ```
 
-Expected: a version like `2.2.3`. (`python -c "..."` runs a one-line program without a file —
-handy for quick checks.)
+**Expected output:** `pandas 2.x.x` (2.2 or newer).
 
-**Record your dependencies:**
+Record exactly what you installed:
 
 ```powershell
 python -m pip freeze > requirements.txt
 ```
 
-This writes every installed package + exact version to `requirements.txt`. Anyone (including
-future-you on a new laptop) can now recreate your environment with
-`python -m pip install -r requirements.txt`. We'll revisit this in Lab 06.
+`requirements.txt` lists every package with its exact version. Anyone, including you on a new laptop, can rebuild the same environment with `python -m pip install -r requirements.txt`.
 
-#### Step 7 — Install and configure VS Code
+> **Optional, for the guided lab's AI bonus (Part 6) only:** `python -m pip install anthropic`. It also needs an API key, so skip it if you don't have one. The pipeline runs fine without it.
 
-1. Download from <https://code.visualstudio.com/> → run installer → accept defaults, but **check
-   "Add 'Open with Code' action"** boxes (handy right-click integration).
-2. Open VS Code → **Extensions** icon in the left bar (four squares) → search **Python** → install
-   the one published by **Microsoft** (installs Pylance too).
-3. Open your project: **File → Open Folder → `C:\DataEngineering\sk01`**. Click "Yes, I trust the authors."
-4. Tell VS Code about your venv: press **Ctrl+Shift+P** → type `Python: Select Interpreter` →
-   choose the entry containing `.venv` (e.g., `Python 3.12.4 ('.venv': venv)`).
-5. Open a terminal inside VS Code with **Ctrl+`** (backtick). It should auto-activate the venv —
-   look for `(.venv)` in the prompt.
+✅ **Checkpoint:** the import check prints a pandas version of 2.2 or newer, and `requirements.txt` exists.
 
-**Verify end-to-end.** In VS Code, create a file `src\hello_pipeline.py`:
+### Step 7 — Install and configure VS Code
+
+1. Download VS Code from <https://code.visualstudio.com/> and install it with the default options.
+2. Open VS Code. Click **Extensions** in the left bar (four squares), search **Python** and install the one published by **Microsoft**.
+3. **File → Open Folder → `C:\DataEngineering\sk01`**. Click "Yes, I trust the authors".
+4. Press **Ctrl+Shift+P**, type `Python: Select Interpreter`, and choose the entry containing `.venv`.
+5. Open a terminal inside VS Code with **Ctrl+`** (backtick). Look for `(.venv)` in the prompt. If it's missing, run `.\.venv\Scripts\Activate.ps1`.
+
+### Step 8 — Prove the toolchain works
+
+In VS Code create `practice\hello_pipeline.py`:
 
 ```python
-"""My first data engineering script — verifies the whole toolchain."""
+"""First script: checks the toolchain and shows a tiny ShopStream table."""
 import sys
 import pandas as pd
 
 print(f"Python : {sys.version.split()[0]}")
 print(f"pandas : {pd.__version__}")
 
-df = pd.DataFrame({"tool": ["python", "venv", "pandas", "vscode"], "status": ["ok"] * 4})
-print(df)
+customers = pd.DataFrame({
+    "email": ["maria@gmail.com", "jose@yahoo.com", "lea@company.com"],
+    "region": ["US", "EU", "APAC"],
+})
+print(customers)
 ```
 
-Run it from the VS Code terminal:
+Run it from the project root:
 
 ```powershell
-python src\hello_pipeline.py
+python practice\hello_pipeline.py
 ```
 
-**Expected output:**
+**Expected output** (your version numbers may differ):
 
 ```
-Python : 3.12.4
-pandas : 2.2.3
-     tool status
-0  python     ok
-1    venv     ok
-2  pandas     ok
-3  vscode     ok
+Python : 3.12.x
+pandas : 2.2.x
+             email region
+0  maria@gmail.com     US
+1   jose@yahoo.com     EU
+2  lea@company.com   APAC
 ```
 
-If you see that table, **your workstation is ready**. 🎉
+✅ **Checkpoint:** you see the 3-row table. Your workstation is ready.
 
-**Common problems at this stage**
+### Step 9 — Prove the environment is isolated
 
-| Symptom | Fix |
-|---|---|
-| `ModuleNotFoundError: No module named 'pandas'` | venv not active (no `(.venv)` prefix) or wrong interpreter selected in VS Code — redo Step 7.4 |
-| VS Code runs the wrong Python | Bottom-right of VS Code shows the interpreter — click it and pick the `.venv` one |
-| Squiggly underline `Import "pandas" could not be resolved` but script runs | Pylance is looking at the wrong interpreter — same fix as above |
+1. Open a **new** PowerShell window (not VS Code) and run `cd C:\DataEngineering\sk01`.
+2. Run `python practice\hello_pipeline.py` **without** activating. If pandas isn't installed globally you get `ModuleNotFoundError: No module named 'pandas'`. That is the isolation working.
+3. Activate (`.\.venv\Scripts\Activate.ps1`) and run it again. It works.
 
----
-
-## 2. Business Context
-
-Why does a *setup* lab deserve two hours of your life?
-
-Because in industry, **environment problems are the most common reason pipelines fail when moved
-between machines.** "It works on my laptop" is a running joke precisely because it's a daily
-reality: a developer builds a pipeline against pandas 2.2, the production server has 1.5, and a
-function behaves differently — the nightly job silently produces wrong numbers, and Finance makes
-a decision on them.
-
-Every company running Python pipelines — banks reconciling transactions, retailers computing
-inventory, hospitals reporting to regulators — depends on **reproducible environments**: the
-guarantee that the same code + the same declared dependencies produce the same behavior anywhere.
-The tools you just set up (`venv`, `requirements.txt`) are the entry-level version of that
-guarantee; Docker and cloud environments (SK-03, SK-04) are the industrial versions, and they'll
-make far more sense because you learned this first.
-
-**Who consumes this?** Your future teammates. A repo with a clear folder structure and a
-`requirements.txt` can be picked up by a new hire in ten minutes. One without can burn a day.
-**What happens if it fails?** Onboarding drags, "works on my machine" bugs ship, and — worst case —
-production runs different library versions than were tested.
+✅ **Checkpoint:** you can explain why the same command failed and then worked.
 
 ---
 
-## 3. Concept Explanation
+## Troubleshooting
 
-### The interpreter, scripts, and the REPL
-
-Python is an **interpreted language**: a program called the interpreter (`python.exe`) reads your
-`.py` file top to bottom and executes it. You can also run the interpreter interactively — type
-`python` alone and you get the **REPL** (Read-Eval-Print Loop), a prompt (`>>>`) where each line
-runs immediately. Great for experiments; exit with `exit()`. Real pipelines are always scripts,
-because scripts can be scheduled and version-controlled.
-
-### Why virtual environments, really
-
-Python packages install into a folder called `site-packages`. One global folder = one version of
-each package for *everything* on your machine. Virtual environments give each project its own
-`site-packages`. Pros: isolation, reproducibility, easy cleanup (delete `.venv`, done). Cons:
-you must remember to activate; disk space (tens of MB — trivial). Alternatives:
-
-| Tool | When you'd see it |
-|---|---|
-| `venv` (ours) | Built-in, ubiquitous, perfect for this module |
-| conda | Data science teams needing non-Python binaries (C libraries, CUDA) |
-| Poetry / uv | Teams wanting lockfiles + packaging in one tool; uv is a fast modern favorite |
-
-Learn `venv` first — the concept transfers to all of them.
-
-### Why the command line and not clicking?
-
-Pipelines run at 2 a.m. on servers with no screen. Anything that requires a mouse cannot be
-scheduled. Every skill in this module funnels toward: *a command that can run unattended*.
+| Symptom | Cause | Fix |
+|---|---|---|
+| Microsoft Store opens when you type `python` | Windows "app execution alias" placeholder | Settings → Apps → Advanced app settings → App execution aliases → turn **off** `python.exe` and `python3.exe`. Open a new PowerShell. |
+| `'python' is not recognized` after installing | "Add to PATH" not ticked, or an old window | Re-run the installer → Modify → tick "Add Python to environment variables". Open a **new** PowerShell. |
+| `Activate.ps1 cannot be loaded because running scripts is disabled` | PowerShell blocks scripts by default | Run once: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`, answer `Y`, then activate again. |
+| `ModuleNotFoundError: No module named 'pandas'` | venv not active, or VS Code uses another interpreter | Check for `(.venv)`. In VS Code, click the interpreter in the bottom-right and choose `.venv`. |
+| `pip install` fails with a proxy or SSL error | Corporate network | Ask IT for the proxy address, then `python -m pip install --proxy http://proxy:port ...`. |
+| `PermissionError` when a file is written later | Project inside OneDrive, or the file is open in Excel | Use `C:\DataEngineering\sk01`; close the file in Excel. |
 
 ---
 
-## 4. Step-by-Step Implementation
+## Key takeaways
 
-Done above (Section 1) — this lab's implementation *is* the setup. Before moving on, complete this
-consolidation exercise to prove to yourself the environment is genuinely reproducible:
+- Work inside an activated venv. Look for `(.venv)` in the prompt, and re-activate in every new window.
+- Install with `python -m pip`, and record versions in `requirements.txt` from day one.
+- The project root is `C:\DataEngineering\sk01`. `data\raw` is read-only; outputs go to `data\processed`.
+- Keep pipeline projects out of OneDrive-synced folders.
 
-1. Open a **brand-new** PowerShell window (not VS Code).
-2. `cd C:\DataEngineering\sk01`
-3. Activate the venv: `.\.venv\Scripts\Activate.ps1`
-4. Run `python src\hello_pipeline.py` — same output as before.
-5. Deactivate (`deactivate`) and run `python -m pip show pandas`:
-   - If pandas is **not** installed globally you'll get a warning/`Package(s) not found` — perfect,
-     that *proves* your isolation works.
-   - If it is found globally (maybe from an old install), notice the different `Location:` path —
-     that's two separate environments coexisting.
-
-If all five steps behave as described, you understand activation better than many working developers.
+**Interview check:** *Why use a virtual environment?* Each project gets its own isolated packages, so dependencies don't clash and the environment can be rebuilt exactly from `requirements.txt`.
 
 ---
 
-## 5. Production Engineering Practices
+## Next
 
-Each lab ends by connecting what you did to production habits. Today's are foundational:
-
-- **Reproducibility (`requirements.txt`).** *Failure story:* a team's ML pipeline produced
-  different forecasts on the prod server than in tests. Cause: unpinned pandas versions — a minor
-  release had changed default sorting in `groupby`. A one-line `requirements.txt` pin would have
-  prevented a week of investigation. From today, every project you create gets one.
-- **Immutable raw data (`data\raw` is read-only by convention).** *Failure story:* an analyst
-  "quickly fixed" a header directly in a source CSV. The next day's automated drop of the same file
-  overwrote it and the pipeline broke again — but now nobody remembered what the manual fix was.
-  Fix data in code, never in files.
-- **Convention over cleverness (standard folder layout).** New engineers should recognize your
-  project's shape instantly. Novel layouts cost every future reader minutes; standard ones cost nothing.
-- **Isolation (venv per project).** Never `pip install` outside a venv again. Global installs are
-  how machines rot.
-
-We'll add logging, idempotency, config, and testing in Labs 04–06 — one layer at a time.
-
----
-
-## 6. Reflection
-
-### What you learned
-You built a professional Python workstation: interpreter, isolated environment, package manager,
-standard project layout, and an editor wired to all of it — and you can verify each layer
-independently, which is exactly how you'll debug environment issues for the rest of your career.
-
-### Why it matters
-Every subsequent lab assumes this setup. More importantly, *environment fluency* is a hiring
-signal: candidates who can't explain venvs get filtered out of junior DE interviews fast.
-
-### Interview questions (with model answers)
-
-1. **What is a virtual environment and why use one?**
-   *An isolated Python environment with its own installed packages, so each project's dependencies
-   don't conflict with others and the environment can be reproduced from a requirements file.*
-2. **What does `pip freeze > requirements.txt` do, and what's it for?**
-   *Writes all installed packages with exact versions to a file; anyone can recreate the
-   environment with `pip install -r requirements.txt` — the basis of reproducible deployments.*
-3. **What is PATH?**
-   *An environment variable listing directories the OS searches for executables — it's why typing
-   `python` works from any folder.*
-4. **Why `python -m pip install` rather than plain `pip install`?**
-   *It guarantees pip runs under the exact interpreter you invoked, avoiding the classic bug of
-   installing packages into a different Python than the one running your code.*
-5. **Why should raw source data be treated as immutable?**
-   *So every pipeline run is reproducible from the original inputs; hand-edits are invisible,
-   unrepeatable, and get overwritten by the next delivery.*
-6. **How would you debug `ModuleNotFoundError` for a package you're sure you installed?**
-   *Check which interpreter is running (`python -c "import sys; print(sys.executable)"`) and
-   whether the venv is activated — nine times out of ten the package is installed in a different
-   environment than the one executing.*
-
-**Common interview trap:** "Is Python compiled or interpreted?" — Naively saying "interpreted" is
-fine at junior level, but the sharp answer notes Python compiles to bytecode (`.pyc`) which the
-interpreter executes; the practical point is you don't run a separate build step.
-
-### Real-world applications
-Everything: every pandas pipeline, Airflow DAG (SK-03), and AWS Lambda (SK-04) starts with a
-declared, isolated, reproducible Python environment.
-
-### Key takeaways
-- Always work inside an activated venv; check for the `(.venv)` prefix.
-- `python -m pip`, always.
-- `requirements.txt` from day one.
-- Raw data folder = read-only.
-- New PowerShell window = re-activate.
-
-**Next:** [Lab 01 — Python Foundations for Data Engineering](Lab_01_Python_Foundations_for_Data_Engineering.md),
-where you actually start writing Python.
+[Lab 01 — Python Foundations for Data Engineering](Lab_01_Python_Foundations_for_Data_Engineering.md): you write Python against real ShopStream problems, like messy emails, region labels and phone numbers.

@@ -1,519 +1,546 @@
 # Lab 01 — Python Foundations for Data Engineering
 
-> **Goal:** learn the core Python you will use every day as a data engineer — variables, the data
-> types that model records, loops, functions, file I/O with `pathlib`, and modules — by building a
-> small program that reads a raw CSV file *without pandas*, so that when pandas arrives in Lab 02
-> you understand exactly what it's saving you from.
+> **Goal:** Learn the core Python a data engineer uses every day by working on real ShopStream problems: messy emails, inconsistent region labels, phone numbers in many formats, duplicate customers and nested JSON. You finish by cleaning a handful of customer records with plain Python, which is exactly what the guided lab's pipeline does with pandas at scale.
 >
-> **Time:** 4–6 hours. **Prerequisites:** [Lab 00](Lab_00_Environment_Setup.md) completed.
+> **Time:** 3–4 hours | **Difficulty:** Beginner | **Prerequisites:** [Lab 00](Lab_00_Environment_Setup.md) completed (venv active, project at `C:\DataEngineering\sk01`).
+>
+> **Guided lab coverage:** the Python the [guided lab](../Labs/SK-01_End_to_End_Guided_Lab.md) relies on: f-strings and logging messages, dictionaries (`CONFIG`, `REGION_MAP`), functions with docstrings, `re` (email regex, phone cleaning), `json` and `pathlib` (CRM export, file paths), `try/except` and `datetime`.
 
 ---
 
-## 1. Environment Setup
+## The business problem
 
-Nothing new to install today. Verify the Lab 00 setup:
+ShopStream's marketing team is about to email 500,000 customers. The audit found that 23% of emails are invalid or duplicated, regions come in 15+ spellings, and phone numbers come in many formats. Before using pandas (Lab 02), you'll solve these problems on a few values at a time with plain Python. Every cleaning rule in the guided lab is one of the small ideas you practise here.
+
+---
+
+## Learning objectives
+
+By the end of this lab you can:
+
+1. Use variables, the core types and f-strings to build readable log messages.
+2. Clean text with string methods (`strip`, `lower`, `title`, `replace`, `split`).
+3. Store and look up data with lists, dictionaries and sets, and pick the right one.
+4. Write small, documented functions, like the guided lab's `standardize_*` helpers.
+5. Validate and clean text with regular expressions.
+6. Read and write JSON with `pathlib`, and handle errors with `try/except`.
+
+---
+
+## Before you start
 
 ```powershell
 cd C:\DataEngineering\sk01
 .\.venv\Scripts\Activate.ps1
-python --version
 ```
 
-Expected: the `(.venv)` prefix and your Python version. If activation fails, revisit Lab 00 Step 5.
+Each step below has you create a small script in `practice\` and run it from the project root with `python practice\<name>.py`. Create the files in VS Code.
 
-Create today's working file:
+---
+
+## Steps
+
+### Step 1 — Variables, types and f-strings
+
+**What:** Store one customer's values and print them in a log-style message.
+
+Create `practice\lab01_basics.py`:
+
+```python
+customer_id = 42
+email = "maria@gmail.com"
+lifetime_value = 1234.5
+opt_out = False
+region = None
+
+print(f"Customer {customer_id}: {email}, LTV={lifetime_value:,.2f}, opted out? {opt_out}")
+print(type(customer_id), type(email), type(lifetime_value), type(opt_out), type(region))
+print(f"[{'US':<6}] [{'EU':>6}] id={7:06d} rate={0.0812:.1%} total={1255000:,}")
+print("=" * 30)
+```
 
 ```powershell
-New-Item src\lab01_foundations.py
-```
-
-Open the folder in VS Code (`code .` from the project directory opens VS Code right there — try it).
-
-We also need a small raw data file to practice on. Create `data\raw\employees_sample.csv` in
-VS Code with exactly this content (type it — noticing structure is the point):
-
-```csv
-employee_id,first_name,last_name,department,salary,hire_date
-101,Ama,Mensah,Engineering,85000,2021-03-15
-102,Kofi,Boateng,Marketing,62000,2019-11-02
-103,Esi,Owusu,Engineering,91000,2022-07-30
-104,Yaw,Asante,,58000,2020-01-20
-105,Ama,Mensah,Engineering,85000,2021-03-15
-```
-
-Note two deliberate defects: row 104 has an **empty department**, and row 105 **duplicates** row
-101. Real data always has both; we'll detect them today by hand.
-
-**Verification:** `Get-Content data\raw\employees_sample.csv` in PowerShell prints the 6 lines.
-
----
-
-## 2. Business Context
-
-Why learn "plain Python" when pandas exists?
-
-Because pipelines are mostly *not* DataFrame operations. Real pipeline code is: looping over files
-in a folder, building dictionaries of configuration, writing functions that decide whether a file
-is valid, parsing a filename to extract a date, constructing output paths. That's all core Python.
-Engineers who only know pandas write pipelines that are un-testable one-thousand-line scripts;
-engineers who know Python structure them into small functions and modules.
-
-Industry reality check: in the capstone (and at any employer), you'll receive JSON from an API —
-which arrives in Python as **dictionaries and lists**, exactly what you learn today. If nested
-dicts confuse you, every API integration will too. Who consumes this skill? *You*, in every
-subsequent lab. What happens if it's weak? You'll copy-paste pandas snippets you can't adapt, and
-the first non-tabular problem will stop you cold.
-
----
-
-## 3. Concept Explanation
-
-### Values, types, and variables
-
-A **value** is a piece of data (`42`, `"Ama"`, `3.5`). Every value has a **type** — the kind of
-thing it is, which determines what you can do with it. A **variable** is a name attached to a
-value so you can refer to it later.
-
-The types you'll use constantly:
-
-| Type | Example | Data engineering use |
-|---|---|---|
-| `int` | `85000` | counts, IDs, whole-number amounts |
-| `float` | `85000.0` | measurements, ratios (beware: floats are approximate — never use for money math in finance; use `decimal` there) |
-| `str` (string) | `"Engineering"` | names, codes, anything textual — most raw data arrives as strings |
-| `bool` | `True` / `False` | flags: is_valid, is_duplicate |
-| `None` | `None` | "no value" — Python's version of NULL/missing |
-| `list` | `[101, 102, 103]` | ordered collection — a column of values, lines of a file |
-| `dict` (dictionary) | `{"employee_id": 101, "name": "Ama"}` | key→value mapping — **one record**; also configs, lookups |
-| `tuple` | `(101, "Ama")` | like a list but immutable — fixed-shape pairs |
-| `set` | `{101, 102}` | unordered, unique values — perfect for "have I seen this ID before?" |
-
-The mental model that makes data engineering click: **a table is a list of dicts.** Each dict is a
-row; the keys are column names. pandas will later give you a much faster, richer version of the
-same idea.
-
-### Why alternatives exist
-
-Could you do this lab in Excel? For 5 rows, yes. For 15,000 rows arriving nightly, needing
-deduplication rules and an audit trail — no. Could you use another language (Java, Scala, SQL)?
-All are used in data engineering, but Python won the general-purpose slot because it's readable,
-has pandas/PySpark, and every orchestration tool (Airflow, SK-03) speaks it. SQL (SK-02)
-complements Python; it doesn't replace it for file wrangling and glue logic.
-
-### Functions and modules
-
-A **function** is a named, reusable block of code with inputs (**parameters**) and an output
-(**return value**). A **module** is simply a `.py` file whose functions you can `import` into
-another file. These two ideas are the whole basis of "modular pipeline code" in Lab 04.
-
----
-
-## 4. Step-by-Step Implementation
-
-Work in `src\lab01_foundations.py`. After each step, run it with
-`python src\lab01_foundations.py` and compare with the expected output. Delete or comment out
-previous experiment lines as you go if output gets noisy (`#` starts a comment — Python ignores
-the rest of the line).
-
-### Step 1 — Variables, types, and f-strings
-
-**What/why:** get comfortable creating values and printing readable messages — logging readable
-messages is 20% of pipeline code.
-
-```python
-employee_id = 101              # int
-first_name = "Ama"             # str
-salary = 85000.0               # float
-is_active = True               # bool
-department = None              # None: we don't know it (yet)
-
-print(f"Employee {employee_id}: {first_name}, salary={salary:,.2f}, active={is_active}")
-print(type(employee_id), type(first_name), type(department))
-```
-
-An **f-string** (`f"..."`) embeds variables into text with `{}`. The `:,.2f` is a format spec —
-thousands separators, 2 decimals.
-
-**Expected output:**
-
-```
-Employee 101: Ama, salary=85,000.00, active=True
-<class 'int'> <class 'str'> <class 'NoneType'>
-```
-
-**Common mistake:** forgetting the `f` prefix — you'll literally print `{employee_id}`.
-**Troubleshooting:** `SyntaxError` usually means a missing quote or parenthesis on the *line
-above* the one reported.
-
-### Step 2 — Strings are your parsing toolkit
-
-**What/why:** raw data arrives as text. These four methods do most cleaning work in the wild:
-
-```python
-raw = "  ENGINEERING  "
-print(raw.strip())                 # remove surrounding whitespace -> "ENGINEERING"
-print(raw.strip().title())         # -> "Engineering"
-line = "101,Ama,Mensah,Engineering,85000,2021-03-15"
-fields = line.split(",")           # str -> list of str
-print(fields)
-print("-".join(["2021", "03", "15"]))   # list of str -> one str
-print("salary" in "salary,hire_date")   # substring test -> True
+python practice\lab01_basics.py
 ```
 
 **Expected output:**
 
 ```
-ENGINEERING
-Engineering
-['101', 'Ama', 'Mensah', 'Engineering', '85000', '2021-03-15']
-2021-03-15
+Customer 42: maria@gmail.com, LTV=1,234.50, opted out? False
+<class 'int'> <class 'str'> <class 'float'> <class 'bool'> <class 'NoneType'>
+[US    ] [    EU] id=000007 rate=8.1% total=1,255,000
+==============================
+```
+
+**Why:**
+- **`None`** is Python's "no value". A missing region is `None`, not `""` or `"N/A"`. In pandas (Lab 02), missing values are shown as `NaN`.
+- **f-strings** (`f"...{value}..."`) are how the guided lab writes every log line. The part after `:` formats the value: `:,` adds thousands separators, `.2f` gives 2 decimals, `.1%` shows a percentage, `<6`/`>6` pad left/right. The guided lab's quality report uses `{r['pass_rate']:.1%}` and the summary uses `{input_count:,}`.
+- `"=" * 30` repeats a string. The guided lab uses `"=" * 60` for its log section dividers.
+
+✅ **Checkpoint:** you can explain what `:.1%` and `:,` do.
+
+### Step 2 — String methods: the cleaning toolkit
+
+**What:** Fix the kind of messy text ShopStream's sources contain.
+
+Create `practice\lab01_strings.py`:
+
+```python
+raw = "  Maria.Garcia@GMAIL.com  "
+print(repr(raw.strip().lower()))
+print("josé o'brien".title())
+print("555.123.4567".replace(".", ""))
+print("Maria Garcia".split(" ", 1))
+print("test7@test.shopstream.com".endswith("@test.shopstream.com"))
+print("@" in "not-an-email")
+```
+
+**Expected output:**
+
+```
+'maria.garcia@gmail.com'
+José O'Brien
+5551234567
+['Maria', 'Garcia']
 True
+False
 ```
 
-Notice: after `split`, **everything is a string** — `'85000'` is text, not a number. Converting
-(**casting**) is explicit: `int('85000')` → `85000`. This distinction — *representation vs value* —
-is the root of half of all data quality bugs, so burn it in now.
+**Why:** each line matches a guided-lab cleaning rule:
 
-**Common mistake:** `int('85000.0')` raises `ValueError` (int() won't parse a decimal string);
-use `float(...)` first or `int(float(...))`.
+| Method | Guided lab use |
+|---|---|
+| `.strip().lower()` | `standardize_emails`: `Maria@GMAIL.com ` and `maria@gmail.com` must match |
+| `.title()` | `standardize_names`: `JOSÉ` → `José` |
+| `.replace()` | removing formatting from phone numbers |
+| `.split(" ", 1)` | the ERP file gives `full_name`; the guided lab splits it into first and last name (`str.split(n=1)`) |
+| `.endswith(...)` | removing website test accounts (`@test.shopstream.com`) |
 
-### Step 3 — Lists and loops
+`repr()` shows the quotes, so you can see that the spaces are gone. String methods always return a **new** string. Strings never change in place, so you must assign the result: `email = email.strip()`.
 
-**What/why:** processing a file = looping over its lines. Processing a table = looping over records.
+✅ **Checkpoint:** you can say why `"Maria@GMAIL.com "` and `"maria@gmail.com"` would be counted as two customers without `.strip().lower()`.
+
+### Step 3 — Lists and comprehensions
+
+**What:** Hold many values in order and transform them in one line.
+
+Create `practice\lab01_lists.py`:
 
 ```python
-salaries = [85000, 62000, 91000, 58000]
-
-total = 0
-for s in salaries:          # "for each item s in the list..."
-    total += s              # shorthand for total = total + s
-print(f"count={len(salaries)}, total={total}, avg={total/len(salaries):.0f}")
-
-# Pythonic shortcuts you'll see everywhere:
-print(sum(salaries), max(salaries), min(salaries))
-
-# A list comprehension: build a new list from an old one in one line
-high_earners = [s for s in salaries if s > 80000]
-print(high_earners)
+regions = ["US", "eu", "Asia", None]
+for i, r in enumerate(regions):
+    print(i, r)
+print(["US", "EU"] * 3)
+print(list(range(3)))
+cleaned = [r.upper() for r in regions if r is not None]
+print(cleaned)
 ```
 
 **Expected output:**
 
 ```
-count=4, total=296000, avg=74000
-296000 91000 58000
-[85000, 91000]
+0 US
+1 eu
+2 Asia
+3 None
+['US', 'EU', 'US', 'EU', 'US', 'EU']
+[0, 1, 2]
+['US', 'EU', 'ASIA']
 ```
 
-**Common mistake:** indentation. Python uses indentation (4 spaces) instead of braces to mark what
-is "inside" a loop/if/function. `IndentationError` means inconsistent spacing — configure VS Code
-to insert 4 spaces per Tab (it does by default for Python).
+**Why:**
+- `enumerate` gives you the position and the value together. The guided lab's chart code uses `for i, (r, c) in enumerate(region_counts.items())` to place a label above each bar.
+- `["US", "EU"] * 3` repeats a list. The guided lab builds its messy test data this way (`[...] * 150`).
+- The **list comprehension** `[r.upper() for r in regions if r is not None]` is a filtered loop in one line. The `if` skips `None`, because `None.upper()` would crash.
 
-### Step 4 — Dictionaries: the shape of a record
+Notice that `"Asia".upper()` gives `ASIA`, not `APAC`. Changing the case doesn't fix a label. You need a mapping (next step).
 
-**What/why:** dicts model records, JSON, and configuration — the three most common data shapes
-you'll ever touch.
+✅ **Checkpoint:** you can rewrite the comprehension as a normal `for` loop.
+
+### Step 4 — Dictionaries: lookups and configuration
+
+**What:** Use a dictionary to map 15+ messy region labels to 3 valid ones.
+
+Create `practice\lab01_dicts.py`:
 
 ```python
-employee = {
-    "employee_id": 101,
-    "first_name": "Ama",
-    "last_name": "Mensah",
-    "department": "Engineering",
-    "salary": 85000,
-}
-
-print(employee["first_name"])                 # access by key
-print(employee.get("email"))                  # missing key -> None (no crash)
-print(employee.get("email", "MISSING"))       # ...or a default
-employee["email"] = "ama.mensah@corp.com"     # add/overwrite a key
-
-for key, value in employee.items():          # iterate over key/value pairs
+customer = {"email": "maria@gmail.com", "first_name": "Maria", "region": "usa"}
+print(customer["first_name"])
+print(customer.get("phone"))
+print(customer.get("phone", "no phone"))
+customer["opt_out"] = True
+for key, value in customer.items():
     print(f"  {key} = {value}")
+
+REGION_MAP = {"us": "US", "usa": "US", "europe": "EU", "asia": "APAC"}
+for raw in ["usa", "Europe", "mars"]:
+    print(raw, "->", REGION_MAP.get(raw.lower()))
 ```
 
 **Expected output:**
 
 ```
-Ama
+Maria
 None
-MISSING
-  employee_id = 101
-  first_name = Ama
-  last_name = Mensah
-  department = Engineering
-  salary = 85000
-  email = ama.mensah@corp.com
+no phone
+  email = maria@gmail.com
+  first_name = Maria
+  region = usa
+  opt_out = True
+usa -> US
+Europe -> EU
+mars -> None
 ```
 
-**Key distinction:** `employee["email"]` on a missing key raises `KeyError` (crash);
-`employee.get("email")` returns `None`. In pipelines, `.get()` with a default is how you survive
-records with missing fields — you'll use it constantly on API JSON in the capstone.
+**Why:** dictionaries are everywhere in the guided lab:
+- **`CONFIG`** holds every setting (paths, regex, thresholds) in one place, so nothing is hard-coded inside functions.
+- **`REGION_MAP`** turns `"usa"`, `"United States"` and `"North America"` into `"US"`. You lowercase the key first so one entry covers every capitalisation.
+- `.get(key)` returns `None` for a missing key instead of crashing like `customer["phone"]` would. An unknown region (`"mars"`) becomes `None`. That's what we want: it's reported as missing, not silently guessed. In pandas, `.map(REGION_MAP)` does the same and gives `NaN`.
+- `CONFIG["source_priority"] = {"crm": 1, "website": 2, ...}` is a dictionary used as a ranking.
 
-### Step 5 — Conditionals: encoding business rules
+✅ **Checkpoint:** add `"emea": "EU"` to `REGION_MAP` and check that `"EMEA"` now maps to `EU`.
+
+### Step 5 — Sets: finding duplicates
+
+**What:** Find repeated emails. Removing duplicates is half the guided lab.
+
+Create `practice\lab01_sets.py`:
 
 ```python
-salary = 58000
-
-if salary is None:
-    category = "unknown"
-elif salary >= 80000:
-    category = "senior band"
-elif salary >= 60000:
-    category = "mid band"
-else:
-    category = "entry band"
-
-print(category)     # -> entry band
+emails = ["a@x.com", "b@x.com", "a@x.com", "c@x.com", "b@x.com"]
+print(len(emails), len(set(emails)))
+seen = set()
+for e in emails:
+    if e in seen:
+        print("duplicate:", e)
+    seen.add(e)
 ```
 
-Note `is None` (identity check) is the idiomatic way to test for missing values — not `== None`.
+**Expected output:**
 
-### Step 6 — Functions: name your logic
-
-**What/why:** any logic you might reuse or test gets a function. This is the habit that makes
-Lab 06 (testing) possible.
-
-```python
-def categorize_salary(salary):
-    """Return the salary band label for a numeric salary (None-safe)."""
-    if salary is None:
-        return "unknown"
-    if salary >= 80000:
-        return "senior band"
-    if salary >= 60000:
-        return "mid band"
-    return "entry band"
-
-print(categorize_salary(85000))   # senior band
-print(categorize_salary(None))    # unknown
+```
+5 3
+duplicate: a@x.com
+duplicate: b@x.com
 ```
 
-The triple-quoted string is a **docstring** — documentation living inside the function. Write one
-for every function from now on; tools, editors, and teammates all read them.
+**Why:** a **set** holds each value once, and `in` checks are instant even for millions of items. In a list, `in` gets slower as the list grows. `len(emails) - len(set(emails))` tells you how many duplicates there are. The guided lab's "UNIQUE: email" check counts duplicates the same way, using pandas' `.duplicated()`.
 
-**Common mistake:** forgetting `return` — the function then returns `None` silently, and the bug
-shows up far away from its cause.
+| Use a… | When you need… |
+|---|---|
+| list | order, and repeats allowed (rows of a file) |
+| dict | lookup by key (config, mappings, one record) |
+| set | uniqueness and fast "have I seen this?" checks |
 
-### Step 7 — Reading a file safely with `pathlib` and `with`
+✅ **Checkpoint:** you can say which structure you would use to track emails already loaded.
 
-**What/why:** now we read our sample CSV, the raw way. Two tools matter:
+### Step 6 — Functions with docstrings
 
-- **`pathlib.Path`** — the modern way to handle file paths. It handles Windows `\` vs Linux `/`
-  automatically, so your code is portable.
-- **`with open(...) as f:`** — a **context manager**: it guarantees the file is closed even if an
-  error occurs mid-read. Unclosed files cause locked-file errors on Windows and resource leaks on
-  servers. Always `with`, never bare `open()`.
+**What:** Wrap a cleaning rule in a reusable, documented function. The guided lab is built from about 20 functions like this.
+
+Create `practice\lab01_functions.py`:
 
 ```python
+def standardize_region(value: str) -> str:
+    """Return US/EU/APAC for a messy region label, or None if unknown."""
+    region_map = {"us": "US", "usa": "US", "eu": "EU", "europe": "EU", "apac": "APAC", "asia": "APAC"}
+    if value is None:
+        return None
+    return region_map.get(value.strip().lower())
+
+print(standardize_region(" USA "), standardize_region("Europe"), standardize_region("mars"), standardize_region(None))
+
+
+def count_valid(values: list) -> int:
+    """Count values that a nested helper says are valid."""
+    def is_valid(v):
+        return v is not None and v != ""
+    return sum(1 for v in values if is_valid(v))
+
+print(count_valid(["a", "", None, "b"]))
+```
+
+**Expected output:**
+
+```
+US EU None None
+2
+```
+
+**Why:**
+- **Docstrings** (`"""..."""`) describe what a function does. Every guided-lab function has one, so the next engineer knows what it expects and returns.
+- **Type hints** (`value: str -> str`) are documentation. Python doesn't enforce them, but VS Code uses them to warn you.
+- **Check for `None` first.** Calling `.strip()` on `None` crashes. Real data always has missing values.
+- **Nested functions:** `is_valid` lives inside `count_valid`. The guided lab uses this pattern: `clean_phone` is defined inside `standardize_phone_numbers`, and `merge_group` inside `deduplicate_customers`.
+
+✅ **Checkpoint:** `standardize_region("")` returns `None`. Can you explain why?
+
+### Step 7 — Regular expressions
+
+**What:** Validate emails and strip phone formatting with patterns.
+
+Create `practice\lab01_regex.py`:
+
+```python
+import re
+
+phone = "+1 (555) 123-4567"
+digits = re.sub(r"[^\d]", "", phone)
+print(digits, phone.startswith("+"))
+
+EMAIL_REGEX = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+for e in ["customer1@yahoo.com", "missing@", "double@@sign.com"]:
+    print(e, bool(re.match(EMAIL_REGEX, e)))
+
+print(re.sub(r"\s+", " ", "Maria    del   Carmen"))
+```
+
+**Expected output:**
+
+```
+15551234567 True
+customer1@yahoo.com True
+missing@ False
+double@@sign.com False
+Maria del Carmen
+```
+
+**Why:** a **regular expression** (regex) is a pattern for text.
+
+| Pattern | Means |
+|---|---|
+| `\d` | any digit; `[^\d]` = anything that is *not* a digit |
+| `\s+` | one or more whitespace characters |
+| `^` … `$` | start … end of the text (the whole value must match) |
+| `[a-zA-Z0-9._%+-]+` | one or more of these characters |
+| `{2,}` | 2 or more of the previous item |
+
+- `re.sub(r"[^\d]", "", phone)` is the core of the guided lab's `clean_phone`. It also keeps a leading `+` and rejects anything shorter than 7 digits.
+- `EMAIL_REGEX` is exactly `CONFIG["email_regex"]` in the guided lab: "something @ something . at least 2 letters".
+- `re.sub(r"\s+", " ", ...)` turns runs of spaces into one space, as `standardize_names` does.
+- The `r"..."` prefix makes a **raw string**, so `\d` reaches the regex engine unchanged. Always use it for regex.
+
+✅ **Checkpoint:** add `"@nodomain.com"` to the email list. It should print `False`. Why?
+
+### Step 8 — JSON files and `pathlib`
+
+**What:** Write and read nested JSON, like the CRM export.
+
+Create `practice\lab01_json.py`:
+
+```python
+import json
 from pathlib import Path
 
-RAW_FILE = Path("data") / "raw" / "employees_sample.csv"   # "/" joins path parts
-
-def read_employees(path):
-    """Read the sample CSV into a list of dicts (one dict per row)."""
-    records = []
-    with open(path, "r", encoding="utf-8") as f:
-        header = f.readline().strip().split(",")     # first line = column names
-        for line in f:                               # remaining lines = data
-            values = line.strip().split(",")
-            record = dict(zip(header, values))       # pair headers with values
-            records.append(record)
-    return records
-
-employees = read_employees(RAW_FILE)
-print(f"Loaded {len(employees)} records")
-print(employees[0])
+out_dir = Path("data") / "processed"
+out_dir.mkdir(parents=True, exist_ok=True)
+record = {"id": "CRM-000001", "email": "maria@gmail.com", "profile": {"first_name": "Maria", "last_name": "García"}}
+text = json.dumps({"customers": [record]})
+print(text)
+path = out_dir / "lab01_sample.json"
+path.write_text(text, encoding="utf-8")
+loaded = json.loads(path.read_text(encoding="utf-8"))
+print(loaded["customers"][0]["profile"]["last_name"])
+print(path.exists(), path.name, path.suffix)
 ```
-
-Run it **from the project root** (`C:\DataEngineering\sk01`) — the relative path `data\raw\...`
-is resolved from your *current directory*, not the script's location.
 
 **Expected output:**
 
 ```
-Loaded 5 records
-{'employee_id': '101', 'first_name': 'Ama', 'last_name': 'Mensah', 'department': 'Engineering', 'salary': '85000', 'hire_date': '2021-03-15'}
+{"customers": [{"id": "CRM-000001", "email": "maria@gmail.com", "profile": {"first_name": "Maria", "last_name": "Garc\u00eda"}}]}
+García
+True lab01_sample.json .json
 ```
 
-Observe: every value is a **string** — even salary. And `zip(header, values)` pairs
-`('employee_id', '101'), ('first_name', 'Ama'), ...` which `dict()` turns into a record. This tiny
-function is a hand-made `pd.read_csv`.
+**Why:**
+- **JSON** is how APIs and many systems exchange data. In Python it becomes dicts and lists. The CRM export has exactly this shape: `{"customers": [ {..., "profile": {...}} ]}`. `profile` is *nested*, which is why the guided lab flattens it with `pd.json_normalize` (Lab 02).
+- `json.dumps` writes `í` as `\u00ed`. That's normal JSON escaping, and `json.loads` turns it back into `García`.
+- **`pathlib.Path`** builds file paths with `/`, which works on Windows, macOS and Linux. The guided lab writes `CONFIG["input_dir"] / "crm_export.json"`.
+- `mkdir(parents=True, exist_ok=True)` creates the folder if needed and doesn't fail if it already exists. Running it twice is safe.
+- **Always pass `encoding="utf-8"`.** On Windows the default encoding is often not UTF-8, and accented names (`García`, `Müller`) get garbled. Garbled names are one of the problems in the ShopStream audit.
 
-**Troubleshooting**
+✅ **Checkpoint:** `data\processed\lab01_sample.json` exists. Open it in VS Code and find `profile`.
+
+### Step 9 — Errors and dates
+
+**What:** Handle bad values without crashing, and work with dates.
+
+Create `practice\lab01_errors.py`:
+
+```python
+from datetime import datetime
+
+start = datetime.now()
+for value in ["85000", "N/A"]:
+    try:
+        print(int(value) * 2)
+    except ValueError as e:
+        print(f"Could not convert {value!r}: {e}")
+duration = (datetime.now() - start).total_seconds()
+print(f"Duration: {duration:.1f}s")
+print(datetime(2024, 1, 15).strftime("%Y-%m-%d"), datetime(2024, 1, 15).isoformat())
+```
+
+**Expected output:**
+
+```
+170000
+Could not convert 'N/A': invalid literal for int() with base 10: 'N/A'
+Duration: 0.0s
+2024-01-15 2024-01-15T00:00:00
+```
+
+**Why:**
+- **`try/except`** catches a specific error (`ValueError`) and carries on. Catch the narrowest error you expect. A bare `except:` also hides real bugs. The guided lab uses `try/except` around each AI request, so one failed batch doesn't stop the run. Lab 05 covers when to catch an error and when to stop.
+- `{value!r}` prints the value with quotes, so empty strings and spaces are visible in error messages.
+- **`datetime.now()`** at the start and end is how the guided lab measures `Duration` and stamps `Run started: ...isoformat()`. `strftime("%Y-%m-%d")` produces `2024-01-15`, the date format all ShopStream sources are standardised to.
+
+✅ **Checkpoint:** change `"N/A"` to `"12a"`. The except branch still handles it.
+
+### Step 10 — Mini-pipeline: clean 5 customer records
+
+**What:** Combine everything above into one script that does, in plain Python, what the guided lab does with pandas: standardise, validate, drop test accounts, deduplicate (an opt-out anywhere wins) and write the result.
+
+Create `practice\lab01_mini_pipeline.py`:
+
+```python
+"""Lab 01 mini-pipeline: clean a few ShopStream customer records with plain Python."""
+import json
+import re
+from pathlib import Path
+
+EMAIL_REGEX = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+REGION_MAP = {
+    "us": "US", "usa": "US", "united states": "US", "north america": "US",
+    "eu": "EU", "europe": "EU", "emea": "EU",
+    "apac": "APAC", "asia": "APAC", "asia pacific": "APAC", "ap": "APAC",
+}
+
+raw_records = [
+    {"email": "  Maria@GMAIL.com ", "first_name": "maria", "phone": "+1 (555) 123-4567", "region": "USA", "opt_out": 0},
+    {"email": "maria@gmail.com", "first_name": "MARIA", "phone": None, "region": "", "opt_out": 1},
+    {"email": "jose@yahoo.com", "first_name": "josé", "phone": "555.123.4567", "region": "Europe", "opt_out": 0},
+    {"email": "missing@", "first_name": "pat", "phone": "invalid-phone", "region": "Asia", "opt_out": 0},
+    {"email": "test3@test.shopstream.com", "first_name": "Test", "phone": None, "region": "US", "opt_out": 0},
+]
+
+
+def standardize_email(value):
+    """Trim, lowercase and remove spaces; return None for blanks."""
+    if value is None:
+        return None
+    value = re.sub(r"\s+", "", value).lower()
+    return value or None
+
+
+def is_valid_email(value):
+    return value is not None and re.match(EMAIL_REGEX, value) is not None
+
+
+def standardize_region(value):
+    if value is None:
+        return None
+    return REGION_MAP.get(value.strip().lower())
+
+
+def clean_phone(value):
+    """Keep digits (and a leading +); None if fewer than 7 digits."""
+    if value is None:
+        return None
+    digits = re.sub(r"[^\d]", "", value)
+    if len(digits) < 7:
+        return None
+    return "+" + digits if value.strip().startswith("+") else digits
+
+
+golden = {}          # email -> merged record
+rejected = []
+for record in raw_records:
+    email = standardize_email(record["email"])
+    if email is not None and email.endswith("@test.shopstream.com"):
+        continue                                   # drop internal test accounts
+    if not is_valid_email(email):
+        rejected.append(record)
+        continue
+    cleaned = {
+        "email": email,
+        "first_name": record["first_name"].strip().title(),
+        "phone": clean_phone(record["phone"]),
+        "region": standardize_region(record["region"]),
+        "opt_out": bool(record["opt_out"]),
+    }
+    if email in golden:                            # duplicate: merge into the first record
+        first = golden[email]
+        for field in ["phone", "region"]:
+            if first[field] is None:
+                first[field] = cleaned[field]
+        first["opt_out"] = first["opt_out"] or cleaned["opt_out"]   # an opt-out anywhere wins
+    else:
+        golden[email] = cleaned
+
+print(f"Input: {len(raw_records)}  golden: {len(golden)}  rejected: {len(rejected)}")
+for customer in golden.values():
+    print(customer)
+
+out = Path("data") / "processed" / "lab01_golden.json"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(list(golden.values()), indent=2), encoding="utf-8")
+print(f"Wrote {out}")
+```
+
+```powershell
+python practice\lab01_mini_pipeline.py
+```
+
+**Expected output:**
+
+```
+Input: 5  golden: 2  rejected: 1
+{'email': 'maria@gmail.com', 'first_name': 'Maria', 'phone': '+15551234567', 'region': 'US', 'opt_out': True}
+{'email': 'jose@yahoo.com', 'first_name': 'José', 'phone': '5551234567', 'region': 'EU', 'opt_out': False}
+Wrote data\processed\lab01_golden.json
+```
+
+**Why:** follow Maria. She appears twice: once with a messy email and a US region, and once with no region but `opt_out = 1`. After cleaning, both rows have the same email, so they merge. The merged record keeps her phone and region, **and** is opted out, because one opt-out in any source is final. That is the GDPR rule in the guided lab's `deduplicate_customers`. `missing@` is rejected and the test account is dropped.
+
+The guided lab does the same work with pandas, on 2,000 rows from 4 files instead of 5 hand-typed dicts:
+
+| Mini-pipeline (plain Python) | Guided lab (pandas) |
+|---|---|
+| `standardize_email`, `is_valid_email` | `standardize_emails`, `validate_emails` (Part 3.1) |
+| `clean_phone` | `standardize_phone_numbers` (Part 3.2) |
+| `standardize_region` + `REGION_MAP` | `standardize_regions` + `REGION_MAP` (Part 3.3) |
+| `endswith("@test.shopstream.com")` | test-account filter in `ingest_website_csv` (Part 2.1) |
+| `golden` dict keyed by email | `groupby("email")` + `merge_group` (Part 4) |
+
+✅ **Checkpoint:** the output matches, and `data\processed\lab01_golden.json` lists 2 customers. Try adding a sixth record with email `JOSE@yahoo.com ` and `"opt_out": 1`, then re-run. José should become opted out.
+
+---
+
+## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `FileNotFoundError` | Running from the wrong directory | `cd C:\DataEngineering\sk01` first; print `Path.cwd()` to see where you are |
-| `UnicodeDecodeError` | File saved in a non-UTF-8 encoding | In VS Code, bottom-right shows encoding — click it → "Save with Encoding" → UTF-8 |
-| Last record looks wrong | File missing trailing newline or has a blank last line | Guard with `if not line.strip(): continue` inside the loop |
-
-### Step 8 — Detect the defects: nulls and duplicates by hand
-
-**What/why:** you knew rows 104 and 105 were bad. Prove code can find them — this is the seed of
-Lab 03's validator.
-
-```python
-def find_missing_departments(records):
-    """Return employee_ids whose department field is empty."""
-    return [r["employee_id"] for r in records if r["department"] == ""]
-
-def find_duplicates(records):
-    """Return employee_ids seen more than once (by full-field match except id)."""
-    seen = set()
-    dupes = []
-    for r in records:
-        key = (r["first_name"], r["last_name"], r["hire_date"])  # tuple as a composite key
-        if key in seen:
-            dupes.append(r["employee_id"])
-        else:
-            seen.add(key)
-    return dupes
-
-print("Missing department:", find_missing_departments(employees))
-print("Duplicate rows    :", find_duplicates(employees))
-```
-
-**Expected output:**
-
-```
-Missing department: ['104']
-Duplicate rows    : ['105']
-```
-
-That `set` + tuple-key pattern is a real deduplication technique — sets test membership in
-constant time, so this scales to millions of rows.
-
-### Step 9 — Write an output file and split into a module
-
-**What/why:** pipelines end by *writing* results. And to prepare for Lab 04's modular structure,
-we'll move our reusable functions into their own module.
-
-1. Create `src\filetools.py` and move `read_employees`, `find_missing_departments`, and
-   `find_duplicates` into it (with their `from pathlib import Path` import).
-2. Reduce `src\lab01_foundations.py` to:
-
-```python
-"""Lab 01 driver script: read raw employees, report quality issues, write a summary."""
-from pathlib import Path
-from filetools import read_employees, find_missing_departments, find_duplicates
-
-RAW_FILE = Path("data") / "raw" / "employees_sample.csv"
-OUT_FILE = Path("data") / "processed" / "lab01_quality_summary.txt"
-
-employees = read_employees(RAW_FILE)
-missing = find_missing_departments(employees)
-dupes = find_duplicates(employees)
-
-summary = (
-    f"records_read={len(employees)}\n"
-    f"missing_department_ids={missing}\n"
-    f"duplicate_ids={dupes}\n"
-)
-OUT_FILE.write_text(summary, encoding="utf-8")
-print(f"Wrote summary to {OUT_FILE}")
-print(summary)
-```
-
-3. Run from the project root — **note:** run as `python src\lab01_foundations.py` *from* `src`'s
-   parent won't find the import unless Python can see `src`. Simplest fix for now: run from inside
-   `src` with data paths adjusted — or better, run this way from the project root:
-
-```powershell
-python -m src.lab01_foundations
-```
-
-Wait — that needs `src` to be a **package**. Make it one by creating an empty file:
-
-```powershell
-New-Item src\__init__.py
-```
-
-and change the import line to `from src.filetools import ...`. Now `python -m src.lab01_foundations`
-runs from the project root and all relative data paths work.
-
-**Expected output:**
-
-```
-Wrote summary to data\processed\lab01_quality_summary.txt
-records_read=5
-missing_department_ids=['104']
-duplicate_ids=['105']
-```
-
-You just built the skeleton of every pipeline you'll ever write: **read → check → transform →
-write**, split across a reusable module and a thin driver script. The `python -m` +
-`__init__.py` dance felt fussy — remember it; it's exactly how Lab 04 structures the full ETL
-project, and there we'll explain the mechanics properly.
+| `python: can't open file '...\practice\lab01_basics.py'` | Not in the project root, or the file is saved elsewhere | `cd C:\DataEngineering\sk01`; check the file is in `practice\` |
+| `AttributeError: 'NoneType' object has no attribute 'strip'` | Calling a string method on `None` | Check `if value is None` first (Step 6) |
+| `KeyError: 'phone'` | `record["phone"]` on a dict without that key | Use `record.get("phone")` |
+| `IndentationError` | Mixed tabs and spaces, or a missing indent after `:` | Use 4 spaces. VS Code: bottom bar → "Spaces: 4" |
+| Accented names print as `JosÃ©` | File read or written without UTF-8 | Pass `encoding="utf-8"` to `read_text` / `write_text` |
+| Regex never matches | Forgot the `r` prefix, or `^`/`$` misplaced | Use `r"..."`; test one value at a time |
 
 ---
 
-## 5. Production Engineering Practices
+## Key takeaways
 
-- **Small named functions, one job each.** *Failure story:* a 900-line script at a logistics firm
-  mixed parsing, cleaning, and writing. A currency bug took three days to isolate because nothing
-  could be run — or reasoned about — in isolation. Your `find_duplicates` can be tested in five
-  lines; that's the standard to hold.
-- **Docstrings and comments explain *why*, code shows *how*.** Six months from now, the comment
-  `# ADP export duplicates header on page breaks` will save you an afternoon.
-- **`pathlib` over string paths.** Hard-coded `"C:\\Users\\me\\data.csv"` breaks on every other
-  machine and OS. Relative `Path` objects + a defined working directory travel well; Lab 05 will
-  move paths into config entirely.
-- **Context managers (`with`) for every resource.** Files today; database connections in SK-02 —
-  the pattern is identical, and leaked connections take down real systems.
-- **Never trust field values.** Everything read from a text file is a string until *you* cast it,
-  and casting is where errors surface — which is good: loud early failures beat silent wrong numbers.
+- Clean text with `strip()`, `lower()` and `title()` before comparing values. Otherwise one customer looks like two.
+- Use dicts for mappings and config, and sets for "have I seen this?". `.get()` handles missing keys without crashing.
+- Small, documented functions that check for `None` first are what the guided lab is built from.
+- Regex validates formats (emails) and removes formatting (phones). Always use raw strings.
+- Use `pathlib` for paths and always pass `encoding="utf-8"`.
+- Catch specific exceptions. Deciding what may fail quietly and what must stop the run is a design decision (Lab 05).
 
 ---
 
-## 6. Reflection
+## Next
 
-### What you learned
-Python's core types and how they model records; strings as a parsing toolkit; loops, dicts, sets,
-and functions; safe file I/O with `pathlib` and `with`; splitting code into an importable module;
-and you hand-built CSV reading, null detection, and deduplication — the three most common
-operations in data engineering — before letting any library do it for you.
-
-### Why it matters
-Lab 02's pandas will do all of this in one line each. Because you built the manual version, you'll
-know what those one-liners actually do, what can go wrong inside them, and how to work when the
-data *isn't* a neat table.
-
-### Interview questions
-
-1. **What's the difference between a list and a tuple?**
-   *Lists are mutable (can change), tuples immutable. Tuples can therefore be dict keys/set
-   members — handy for composite keys in deduplication.*
-2. **When would you use a set in a data pipeline?**
-   *Fast uniqueness/membership checks — e.g., "seen this ID before?" is O(1) with a set vs O(n)
-   with a list.*
-3. **`dict["key"]` vs `dict.get("key")`?**
-   *Bracket access raises `KeyError` on missing keys; `.get` returns None or a default. Use `.get`
-   for optional fields in messy records, brackets when absence is a genuine error.*
-4. **What does a context manager (`with`) do?**
-   *Guarantees setup/teardown — e.g., closing a file — even if an exception occurs inside the block.*
-5. **Why is `salary = "85000"` dangerous in a pipeline?**
-   *It's a string; comparisons and arithmetic on it are wrong or crash ("100" < "85" as strings!).
-   Types must be cast explicitly and validated.*
-6. **How would you deduplicate a million records on (name, hire_date)?**
-   *Build a set of composite-key tuples while iterating; membership check per record is constant
-   time — linear overall. (In pandas: `drop_duplicates(subset=...)`.)*
-7. **What is `None` and how do you test for it?**
-   *Python's null/missing marker; test with `is None`, not `== None`.*
-
-**Interview trap:** "What does `[s for s in salaries if s > 80000]` return if `salaries` contains
-a `None`?" — It crashes with `TypeError` (can't compare None with int). The trap tests whether you
-reflexively think about missing values. Correct habit: filter or default Nones first.
-
-### Real-world applications
-Config dicts in Airflow, JSON API payloads, filename parsing for date-partitioned drops,
-line-by-line processing of files too large for memory — all pure today-Python.
-
-### Key takeaways
-- A table is a list of dicts; a record is a dict; JSON is dicts and lists.
-- Everything from a text file is a string until you cast it.
-- Functions with docstrings, one job each — that's how testable pipelines are made.
-- `with open(...)` and `pathlib.Path`, always.
-
-**Next:** [Lab 02 — Working with Files and pandas](Lab_02_Working_with_Files_and_Pandas.md), where
-your 15-line CSV reader becomes `pd.read_csv(path)` — and you learn the DataFrame.
+[Lab 02 — Working with Files and pandas](Lab_02_Working_with_Files_and_Pandas.md): you start `pipeline.py`, generate ShopStream's 4 source files and load each one into a pandas DataFrame.
