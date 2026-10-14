@@ -1,233 +1,316 @@
-# Lab_00 — Environment Setup
+# Lab 00 — Environment Setup
 
-> **Time:** 3–4 hours | **Cost: $0.00** — everything in this lab (account creation, IAM, Budgets, CLI, Terraform) is free.
->
-> **Cost Check:** Nothing in this lab bills. But this lab is where you build the safety net (budget alerts) that protects you in every later lab. Do not skip it.
+> **Goal:** Set up a safe AWS account, the AWS CLI, Git Bash and a Python virtual environment with boto3, so every later lab and the SK-04 guided lab run without setup surprises.
+> **Time:** 120–180 min | **Difficulty:** Beginner | **Prerequisites:** SK-03 completed; a Windows 11 PC with admin rights and a credit/debit card for AWS sign-up
+> **Cost:** $0.00 — nothing in this lab bills. You create the budget alerts that protect you in every later lab.
+> **Guided lab coverage:** PART 0 (setup, `scripts/cm_config.py`, "every session" commands) and the PREREQUISITES of `Labs/SK-04_End_to_End_Guided_Lab.md`
 
----
+## Learning objectives
 
-## 1. Environment Setup
+By the end of this lab you can:
 
-This lab *is* the environment setup for the whole module. By the end you will have:
+- Explain root user vs IAM user, and why MFA and budgets come **before** building anything.
+- Use the AWS CLI with your own IAM identity in region `us-east-1` (the region the guided lab uses).
+- Run bash commands in **Git Bash** and Python scripts in a **virtual environment**, which is how the guided lab is written.
+- Create `scripts/cm_config.py`, the single file holding your name, bucket name and every resource name used in SK-04.
 
-| Item | Version | Purpose |
-|---|---|---|
-| AWS account | n/a | Where everything runs |
-| Root user secured with MFA | n/a | Account safety |
-| AWS Budgets alerts at $5 and $20 | n/a | Wallet safety |
-| IAM admin user (with MFA) | n/a | Daily-use identity — never root |
-| AWS CLI | v2 (latest stable) | Command-line control of AWS |
-| Terraform | latest stable (1.x) | Infrastructure as code (Lab_03+) |
-| VS Code + extensions | latest | Editing Terraform/PySpark/SQL |
-| Project folder | n/a | `C:\Users\<you>\Projects\swifthaul-aws\` |
+**Terms used in this lab**
 
-**Terminology, up front:**
+| Term | Meaning |
+|---|---|
+| **AWS account / root user** | The account you sign up with. Root can do *anything*, including closing the account — lock it away. |
+| **IAM user** | A named identity with limited permissions. You do all daily work as an IAM user. |
+| **MFA** | Multi-factor authentication: a 6-digit code from a phone app, so a stolen password alone cannot get in. |
+| **Region** | A geographic group of AWS data centres. SK-04 uses **`us-east-1` (N. Virginia)** everywhere. |
+| **AWS CLI** | The `aws` command — controls AWS from a terminal. |
+| **boto3** | The AWS SDK for Python — the same API calls as the CLI, from Python code. |
+| **Git Bash** | A bash terminal for Windows (installed with Git). The guided lab's shell scripts are bash. |
+| **venv** | A Python virtual environment: a project-private set of packages. |
 
-- **AWS (Amazon Web Services)** — a cloud provider: computers, storage, and services you rent by the second instead of buying.
-- **Root user** — the email/password you sign up with. It can do *anything*, including delete the account. Treat it like the master key to a building: lock it away, use it almost never.
-- **IAM (Identity and Access Management)** — AWS's free system for creating additional users with limited permissions. You'll do all daily work as an IAM user.
-- **MFA (Multi-Factor Authentication)** — a second login factor (an app on your phone generating 6-digit codes) so a stolen password alone can't get in.
-- **CLI (Command-Line Interface)** — a program that lets you control AWS from PowerShell instead of clicking in the browser.
-- **Terraform** — a tool that creates cloud resources from text files ("infrastructure as code"). You'll meet it properly in Lab_03; today you just install it.
-
-macOS/Linux users: everywhere this lab says PowerShell, use your terminal; installs use `brew install awscli terraform` or your distro's package manager. Everything else is identical.
-
----
-
-## 2. Business Context
-
-Why does a *data engineer* care about account setup? Because in industry:
-
-- **Cloud spend is an engineering responsibility.** Teams have been billed thousands overnight from a forgotten cluster or a leaked access key mined for crypto. The #1 cause of leaked keys is people working as root or committing keys to Git.
-- **Security reviews block deployments.** A pipeline built under sloppy IAM won't pass review at any serious company. Recruiters ask IAM questions in *data* engineering interviews precisely because so many candidates can't answer them.
-- **Who consumes this work?** Future-you (every lab), your security team (audit trails), and finance (budgets). If it fails: at best a scary bill, at worst a compromised account.
-
----
-
-## 3. Concept Explanation
-
-**Why not just use root for everything?** Root can't be permission-limited, its actions are harder to attribute, and if its credentials leak the whole account is gone. The industry pattern is: root creates one admin IAM user, gets MFA, and goes in a drawer.
-
-**Why budgets before anything else?** AWS bills in arrears — you find out what you spent *after* you spent it. AWS Budgets emails you when forecast/actual spend crosses a threshold. It's the smoke alarm you install before lighting the stove. Alternatives: Cost Explorer (reactive, not alerting), third-party FinOps tools (overkill here).
-
-**Why CLI *and* console?** The console (website) is great for learning and inspection; the CLI is scriptable, repeatable, and what real automation uses. You'll use both. Terraform then supersedes hand-run CLI for anything permanent.
-
----
-
-## 4. Step-by-Step Implementation
+## Steps
 
 ### Step 1 — Create the AWS account
 
 1. Go to <https://aws.amazon.com/free> → **Create a Free Account**.
-2. Use an email you control. Account name: `swifthaul-learning` (or similar).
-3. Enter card details (required; you will not be charged if you follow teardown discipline), verify by phone, choose the **Basic (free)** support plan.
+2. Use an email you control. Account name: `cloudmetrics-learning`. Account type: **Personal**.
+3. Enter card details (you will not be charged if you follow every Teardown section), verify by phone, choose the **Basic (free)** support plan.
 
-**Expected result:** you can sign in at <https://console.aws.amazon.com> as root.
-**Common mistake:** picking a "Professional" account type — choose *Personal*.
-**Troubleshooting:** card verification can place a temporary $1 hold; it disappears. Activation can take up to 24h (usually minutes).
+**Expected output:** you can sign in at <https://console.aws.amazon.com> as the root user.
+
+✅ **Checkpoint:** the AWS console home page opens and shows your account name top-right.
 
 ### Step 2 — Lock down root: MFA, no access keys
 
-1. Sign in as root → click your account name (top right) → **Security credentials**.
-2. Under **Multi-factor authentication (MFA)** → **Assign MFA device** → *Authenticator app* → scan the QR with Google Authenticator / Microsoft Authenticator → enter two consecutive codes.
+1. Signed in as root → account name (top right) → **Security credentials**.
+2. **Multi-factor authentication (MFA)** → **Assign MFA device** → *Authenticator app* → scan the QR code with Google/Microsoft Authenticator → enter **two consecutive** codes.
 3. Under **Access keys**, confirm there are **none**. Never create root access keys.
 
-**Verify:** sign out, sign back in as root — it must ask for an MFA code.
-**Common mistake:** entering the same code twice instead of two *consecutive* codes.
+**Expected output:** the MFA section lists one device of type *Virtual*.
+
+✅ **Checkpoint:** sign out and back in as root — you are asked for an MFA code.
 
 ### Step 3 — Budget alerts FIRST ($5 and $20)
 
-1. Console search bar → **Budgets** (under Billing and Cost Management) → **Create budget**.
-2. Choose **Customize** → Budget type: **Cost budget**. Name: `guardrail-5`, Period: Monthly, Amount: **$5**.
-3. Add an alert threshold at **80% of actual** and **100% of forecasted**, notification email = your email.
-4. Repeat for a second budget `guardrail-20` at **$20**.
-5. Also enable: Billing preferences → **Receive Free Tier usage alerts**.
+AWS bills *after* you spend. Budgets email you when spend crosses a threshold — install the smoke alarm before lighting the stove.
 
-**Verify:** both budgets show in the Budgets list; you receive the SNS/email confirmation if prompted (click the confirm link!).
-**Why two budgets?** $5 = "investigate", $20 = "something is actively wrong, tear everything down now."
-**Common mistake:** creating the budget but never confirming the notification email — you'd get no alerts.
+1. Console search bar → **Budgets** → **Create budget** → **Customize** → **Cost budget**.
+2. Name `guardrail-5`, Period **Monthly**, Amount **$5**. Alerts: **80% of actual** and **100% of forecasted**, email = your email.
+3. Repeat for `guardrail-20` at **$20**.
+4. **Billing and Cost Management → Billing preferences** → enable **Receive Free Tier usage alerts**.
 
-### Step 4 — Create the IAM admin user
+**Expected output:** the Budgets list shows `guardrail-5` and `guardrail-20`, each with 2 alerts.
+
+✅ **Checkpoint:** both budgets exist. $5 means "investigate"; $20 means "something is running that should not be — run the Teardown now". These two budgets stay for the whole module (Lab 07 adds a third, tag-filtered one).
+
+### Step 4 — Create your IAM admin user
 
 1. Console → **IAM** → **Users** → **Create user**. Name: `admin-<yourname>`.
-2. Check **Provide user access to the AWS Management Console** → *I want to create an IAM user* → set a strong password, uncheck "must reset".
-3. Permissions: **Attach policies directly** → check **AdministratorAccess**. (Yes, admin for now — Lab_01 teaches least privilege and you'll create a scoped data-engineer identity there.)
-4. Create, then note the **console sign-in URL** (contains your 12-digit account ID) — bookmark it.
-5. Open the new user → **Security credentials** → **Assign MFA device** (same authenticator app, new entry).
+2. Tick **Provide user access to the AWS Management Console** → *I want to create an IAM user* → set a strong password, untick "must create a new password".
+3. **Attach policies directly** → **AdministratorAccess**. (Lab 01 explains why services get narrow roles while this bootstrap human identity is admin.)
+4. Create the user. Copy the **console sign-in URL** (it contains your 12-digit account ID) and bookmark it.
+5. Open the user → **Security credentials** → **Assign MFA device** (new entry in the same app).
 
-**Verify:** sign out of root, sign in at the bookmarked URL as `admin-<yourname>` with MFA. From here on, **never sign in as root again** in this module.
-**Common mistake:** losing the account ID — it's on the root account's top-right menu.
+**Expected output:** user `admin-<yourname>` with policy `AdministratorAccess` and one MFA device.
+
+✅ **Checkpoint:** sign out of root, sign in at the bookmarked URL as `admin-<yourname>` with MFA. **Never sign in as root again in this module.**
 
 ### Step 5 — Create access keys for the CLI
 
-1. As the IAM admin user: IAM → Users → your user → **Security credentials** → **Create access key** → use case: *Command Line Interface* → acknowledge → create.
-2. You get an **Access key ID** (like `AKIA…`) and a **Secret access key** (shown once). Keep this tab open for Step 7.
+As `admin-<yourname>`: IAM → Users → your user → **Security credentials** → **Create access key** → *Command Line Interface (CLI)* → acknowledge → **Create**. Keep the tab open; the secret is shown only once.
 
-**Never** paste these into any file that could reach Git, chat, or a screenshot.
+**Expected output:** an **Access key ID** starting `AKIA` and a **Secret access key**.
 
-### Step 6 — Install AWS CLI v2 on Windows
+✅ **Checkpoint:** you have both values on screen. Never paste them into a file that could reach Git, chat, or a screenshot.
 
-In PowerShell (as your normal user):
+### Step 6 — Install the AWS CLI v2 (PowerShell)
+
+Open **PowerShell** (Start → type PowerShell):
 
 ```powershell
 winget install --id Amazon.AWSCLI -e
 ```
 
-Close and reopen PowerShell, then verify:
+Close and reopen PowerShell, then:
 
 ```powershell
 aws --version
-# Expected: aws-cli/2.x.x Python/3.x Windows/10 exe/AMD64
 ```
 
-**No winget?** Download the MSI from <https://awscli.amazonaws.com/AWSCLIV2.msi> and run it.
-**Troubleshooting:** `aws : The term 'aws' is not recognized` → you didn't reopen PowerShell, or PATH wasn't updated — log off/on, or check `C:\Program Files\Amazon\AWSCLIV2\` exists.
+**Expected output:**
 
-### Step 7 — Configure the CLI
+```
+aws-cli/2.x.x Python/3.x.x Windows/10 exe/AMD64
+```
+
+✅ **Checkpoint:** `aws --version` prints `aws-cli/2`. (No winget? Install the MSI from <https://awscli.amazonaws.com/AWSCLIV2.msi>.)
+
+### Step 7 — Configure the CLI for us-east-1
 
 ```powershell
 aws configure
 # AWS Access Key ID:     <paste from Step 5>
 # AWS Secret Access Key: <paste from Step 5>
-# Default region name:   eu-west-1
+# Default region name:   us-east-1
 # Default output format: json
-```
-
-This writes `C:\Users\<you>\.aws\credentials` and `.aws\config`. **Verify** — the single most useful AWS command:
-
-```powershell
 aws sts get-caller-identity
 ```
 
-Expected output (your numbers/name will differ):
+**Expected output** (your numbers differ):
 
 ```json
 {
-    "UserId": "AIDA...",
+    "UserId": "AIDAEXAMPLEID",
     "Account": "123456789012",
     "Arn": "arn:aws:iam::123456789012:user/admin-francis"
 }
 ```
 
-**Common mistakes:** swapping key ID and secret; region typo (`eu-west1`). **Troubleshooting:** `InvalidClientTokenId` → key pasted wrong or deactivated; re-create the key.
+✅ **Checkpoint:** the `Arn` ends in `:user/admin-<yourname>` — **not** `:root`. Close the access-key browser tab now.
 
-### Step 8 — Install Terraform
-
-```powershell
-winget install --id Hashicorp.Terraform -e
-```
-
-Reopen PowerShell:
+### Step 8 — Install Git (for Git Bash), Python 3.12 and VS Code
 
 ```powershell
-terraform -version
-# Expected: Terraform v1.x.x on windows_amd64
-```
-
-If winget offers nothing, download the Windows AMD64 zip from <https://developer.hashicorp.com/terraform/install>, extract `terraform.exe` to `C:\terraform\`, and add that folder to PATH (Settings → System → About → Advanced system settings → Environment Variables).
-
-### Step 9 — VS Code + project folder
-
-```powershell
+winget install --id Git.Git -e
+winget install --id Python.Python.3.12 -e
 winget install --id Microsoft.VisualStudioCode -e
-mkdir C:\Users\$env:USERNAME\Projects\swifthaul-aws
-cd C:\Users\$env:USERNAME\Projects\swifthaul-aws
-mkdir terraform, glue-scripts, sample-data, notes
-code .
 ```
 
-In VS Code install extensions: **HashiCorp Terraform**, **AWS Toolkit** (optional), **Python**.
-
-**Verify:** folder tree exists; `code .` opens VS Code in the project.
-
-### Step 10 — Dry-run sanity check (free)
+Close and reopen PowerShell, then:
 
 ```powershell
-aws s3 ls          # lists buckets — empty output is correct (you have none yet)
-aws iam list-users # should show your admin user
+git --version
+py -3.12 --version
 ```
 
-Both returning without error proves credentials, region, and CLI all work.
+**Expected output:**
 
----
+```
+git version 2.x.x.windows.1
+Python 3.12.x
+```
 
-## 5. Production Engineering Practices
+✅ **Checkpoint:** both versions print. (If you already have Python 3.11+ from SK-01, that works too — use it wherever this module says 3.12.)
 
-- **Secrets management:** access keys live only in `~\.aws\credentials`, never in code. *Failure story:* a student committed keys to a public GitHub repo; bots found them in under 4 minutes and launched GPU instances for crypto mining — $12,000 in a weekend. AWS often forgives first offenses, but don't test that.
-- **Least privilege (preview):** we granted AdministratorAccess for bootstrap convenience; Lab_01 replaces daily work with a scoped policy. In production, humans rarely hold standing admin — they *assume roles* temporarily.
-- **Config management:** the `.aws\config` file supports named profiles (`aws configure --profile work`) — how professionals juggle multiple accounts.
-- **Monitoring from day zero:** budgets are monitoring. The pattern "alert before act" repeats in Lab_06 with CloudWatch alarms.
-- **Documentation:** start `notes\decisions.md` in your project folder. Write one line: "2026-07-07: region eu-west-1 chosen; budgets $5/$20." Real teams keep decision logs; graders love them.
+### Step 9 — Create the project folder and virtual environment
 
----
+**Use `C:\DataEngineering\sk04` — not Documents, Desktop or any OneDrive folder.** OneDrive locks files while syncing and causes random "file in use" errors; long OneDrive paths also break some tools.
 
-## 6. Reflection
+```powershell
+New-Item -ItemType Directory -Force C:\DataEngineering\sk04\scripts, C:\DataEngineering\sk04\sql, C:\DataEngineering\sk04\infra, C:\DataEngineering\sk04\notes
+cd C:\DataEngineering\sk04
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install boto3 pandas tabulate
+python -c "import boto3, pandas, tabulate; print('boto3', boto3.__version__)"
+```
 
-**What you learned:** account hygiene, root vs IAM, MFA, budget alarms, CLI and Terraform installation, identity verification with STS.
+If `Activate.ps1` is blocked ("running scripts is disabled"), run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once (SK-01 Lab 00 explains it) and retry.
 
-**Interview questions:**
+**Expected output** (last line; version may be newer):
 
-1. *Why should the root user never be used for daily work?* — It can't be permission-scoped, its compromise is unrecoverable in scope, and best practice is MFA + no access keys + break-glass only.
-2. *What does `aws sts get-caller-identity` do?* — Returns the account, user ID, and ARN of the credentials in use; the standard "who am I" check.
-3. *How would you prevent surprise cloud bills?* — Budgets with actual+forecast alerts, free-tier alerts, tagging, and teardown discipline; Cost Explorer for investigation.
-4. *Where should AWS access keys be stored?* — In the credentials file or a secrets manager/SSO session — never in code or version control. Prefer IAM Identity Center (SSO) or roles over long-lived keys.
-5. *What is MFA and why does it matter?* — A second authentication factor; it neutralizes password theft, the most common compromise vector.
-6. *What's the difference between the console, the CLI, and Terraform?* — Manual UI vs scriptable commands vs declarative, versioned infrastructure definitions.
-7. *What is an ARN?* — Amazon Resource Name: the globally unique identifier of any AWS resource (`arn:aws:iam::123456789012:user/x`). Dissected fully in Lab_01.
+```
+boto3 1.x.x
+```
 
-**Common interview trap:** "Have you ever used root access keys for automation?" The only right answer is no, with the reason.
+✅ **Checkpoint:** your PowerShell prompt starts with `(.venv)`. `tabulate` is required later by pandas' `to_markdown()` (Lab 07 and guided lab Part 6).
 
-**Key takeaways:** budgets before builds; root goes in a drawer; verify identity with STS; one project folder, one region, forever (well, for this module).
+### Step 10 — Meet Git Bash (where the rest of SK-04 runs)
 
----
+Start menu → **Git Bash**. Then:
+
+```bash
+cd /c/DataEngineering/sk04
+source .venv/Scripts/activate
+which python
+aws sts get-caller-identity --query Arn --output text
+```
+
+**Expected output:**
+
+```
+/c/DataEngineering/sk04/.venv/Scripts/python
+arn:aws:iam::123456789012:user/admin-francis
+```
+
+Differences from PowerShell to remember:
+
+| | PowerShell | Git Bash |
+|---|---|---|
+| Path to the project | `C:\DataEngineering\sk04` | `/c/DataEngineering/sk04` |
+| Activate the venv | `.\.venv\Scripts\Activate.ps1` | `source .venv/Scripts/activate` |
+| Continue a long command on the next line | backtick `` ` `` | backslash `\` |
+| Paste | Ctrl+V | Shift+Insert (or right-click → Paste) |
+
+✅ **Checkpoint:** `which python` points inside `.venv` and the CLI works from Git Bash.
+
+### Step 11 — Create the shared settings file `scripts/cm_config.py`
+
+Every lab and the guided lab import this file, and bash reads it too, so **your name lives in exactly one place**. Open the folder in VS Code (`code .` in Git Bash) and create `scripts/cm_config.py` — change `NAME` and `ALERT_EMAIL`:
+
+```python
+# scripts/cm_config.py — shared settings for the SK-04 granular labs and guided lab
+NAME = "francis"                 # <- your name: lowercase letters, digits, hyphens only
+ALERT_EMAIL = "you@example.com"  # <- an inbox you can open (budget + alarm emails)
+
+REGION = "us-east-1"
+BUCKET = f"cloudmetrics-data-lake-{NAME}"    # bucket names are global, so yours must be unique
+KMS_ALIAS = "alias/cloudmetrics-data-key"
+STREAM_NAME = "cloudmetrics-events"
+FIREHOSE_NAME = "cloudmetrics-events-to-s3"
+FIREHOSE_STACK = "cloudmetrics-firehose"
+GLUE_DATABASE = "cloudmetrics_raw"
+GLUE_TABLE = "events"
+CLUSTER_ID = "cloudmetrics-prod"
+DB_NAME = "analytics"
+DB_USER = "awsuser"
+SUBNET_GROUP = "cloudmetrics-subnet-group"
+SECURITY_GROUP = "cloudmetrics-redshift-sg"
+SNS_TOPIC = "data-platform-alerts"
+BUDGET_NAME = "cloudmetrics-data-platform"
+ROLE_PRODUCER = "cloudmetrics-kinesis-producer-role"
+ROLE_FIREHOSE = "cloudmetrics-firehose-delivery-role"
+ROLE_GLUE = "cloudmetrics-glue-etl-role"
+ROLE_REDSHIFT = "cloudmetrics-redshift-spectrum-role"
+TAGS = {"CostCenter": "data-platform", "Environment": "learning"}
+
+
+def account_id() -> str:
+    """12-digit account ID of whoever is logged in (never hard-code it)."""
+    import boto3
+    return boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
+
+
+if __name__ == "__main__":
+    # `eval "$(python scripts/cm_config.py)"` in Git Bash exports these for bash scripts
+    for key in ("NAME", "REGION", "BUCKET", "KMS_ALIAS", "STREAM_NAME", "FIREHOSE_NAME",
+                "FIREHOSE_STACK", "GLUE_DATABASE", "GLUE_TABLE", "CLUSTER_ID", "ROLE_FIREHOSE"):
+        print(f'export {key}="{globals()[key]}"')
+    print(f'export ACCOUNT_ID="{account_id()}"')
+```
+
+Now load it into bash:
+
+```bash
+eval "$(python scripts/cm_config.py)"
+echo "$BUCKET in $REGION for account $ACCOUNT_ID"
+```
+
+**Expected output:**
+
+```
+cloudmetrics-data-lake-francis in us-east-1 for account 123456789012
+```
+
+✅ **Checkpoint:** the bucket name contains **your** name. Bucket names are global across all AWS customers, so `cloudmetrics-data-lake-francis` can exist only once on Earth.
+
+### Step 12 — The "every session" routine and a cost check
+
+Every time you open Git Bash for SK-04, run these three lines first (the guided lab uses the same routine):
+
+```bash
+cd /c/DataEngineering/sk04
+source .venv/Scripts/activate
+eval "$(python scripts/cm_config.py)"
+```
+
+And end every session by checking what exists:
+
+```bash
+aws resourcegroupstaggingapi get-resources --region us-east-1 --query 'ResourceTagMappingList[].ResourceARN'
+```
+
+**Expected output:**
+
+```
+[]
+```
+
+✅ **Checkpoint:** an empty list — nothing exists yet. Write one line in `notes/decisions.md`: "Region us-east-1; budgets $5/$20; project at C:\DataEngineering\sk04."
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `aws : The term 'aws' is not recognized` | PowerShell opened before the install finished | Close and reopen PowerShell; check `C:\Program Files\Amazon\AWSCLIV2\` exists |
+| `InvalidClientTokenId` / `SignatureDoesNotMatch` | Key ID and secret swapped or mistyped | Re-run `aws configure`; if in doubt create a new key and deactivate the old one |
+| `get-caller-identity` shows `:root` | You created root access keys | Delete them (root → Security credentials) and redo Steps 4–7 |
+| `Activate.ps1 cannot be loaded` | PowerShell execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then retry |
+| `python` in Git Bash opens the Microsoft Store or hangs | Windows "App execution alias" stub, or the interactive REPL needs a console | Activate the venv first; for the interactive prompt use `winpty python` |
+| `ModuleNotFoundError: No module named 'boto3'` | venv not active | `source .venv/Scripts/activate` (Git Bash) or `.\.venv\Scripts\Activate.ps1` (PowerShell) |
+| Budget alert emails never arrive | Notification not confirmed / wrong address | Edit the budget alerts and check the email address |
 
 ## Teardown
 
-Nothing to tear down — nothing bills. But end every session with the habit anyway:
+Nothing bills in this lab — **keep everything** (budgets, admin user, CLI configuration, venv). If you ever suspect your access key leaked: IAM → your user → Security credentials → **Deactivate** the key, then create a new one.
 
-```powershell
-aws resourcegroupstaggingapi get-resources --region eu-west-1
-# Expected now: an empty ResourceTagMappingList
-```
+## Key takeaways
 
-If that list is empty and Budgets shows $0.00 forecast, you're clean. **Next:** [Lab_01_AWS_Foundations_and_IAM.md](Lab_01_AWS_Foundations_and_IAM.md).
+- Budgets and MFA come before any resource.
+- Daily work happens as an IAM user, never root; verify with `aws sts get-caller-identity`.
+- One region (`us-east-1`), one project folder outside OneDrive (`C:\DataEngineering\sk04`), one settings file (`scripts/cm_config.py`).
+- Bash blocks run in Git Bash; Python runs inside the activated venv.
+
+## Next
+
+[Lab 01 — AWS Foundations, IAM and boto3](Lab_01_AWS_Foundations_IAM_and_Boto3.md)
